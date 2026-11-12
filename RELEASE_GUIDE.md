@@ -35,8 +35,8 @@ Copy only code and redistributable assets:
 Check with:
 
 ```sh
-git status --short
-git grep -n -i -E "MIDIDEMO|Copy Protection|Scc1t2|Yiwza|\\.sf2|Cap/"
+git ls-files | grep -i -E "MIDIDEMO|Copy Protection|Cap/|\\.sf2$|\\.wav$"
+git grep -n -i -E "MIDIDEMO|Copy Protection|Scc1t2|Yiwza|Cap/"
 ```
 
 If a copyrighted file was already committed, removing it in a new commit is not
@@ -57,6 +57,7 @@ enough — rewrite history before publishing, for example with
 3. Search for private references:
 
    ```sh
+   git ls-files | grep -i -E "MIDIDEMO|Copy Protection|Cap/|\\.sf2$|\\.wav$"
    git grep -n -i -E "MIDIDEMO|Copy Protection|Scc1t2|Yiwza|Cap/"
    ```
 

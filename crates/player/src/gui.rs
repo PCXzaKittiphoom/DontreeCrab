@@ -28,7 +28,7 @@ const MELODY_CHANNEL: u8 = 8;
 
 const GITHUB_URL: &str = "https://github.com/PCXzaKittiphoom/DontreeCrab";
 const APP_VERSION_LABEL: &str = concat!(env!("CARGO_PKG_VERSION"), " Beta");
-const LICENSE_TEXT: &str = include_str!("../LICENSE");
+const LICENSE_TEXT: &str = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/../../LICENSE"));
 
 /// Which About popup is open.
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -290,8 +290,11 @@ impl Default for KaraokeApp {
 }
 
 pub fn run(initial: Vec<PathBuf>) -> eframe::Result {
-    let icon = eframe::icon_data::from_png_bytes(include_bytes!("../logo/DontreeCrab_icon.png"))
-        .expect("valid DontreeCrab icon");
+    let icon = eframe::icon_data::from_png_bytes(include_bytes!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../logo/DontreeCrab_icon.png"
+    )))
+    .expect("valid DontreeCrab icon");
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
             .with_icon(icon)
@@ -500,9 +503,11 @@ impl KaraokeApp {
         painter.rect_filled(rect, 0.0, BG);
 
         let texture = self.startup_texture.get_or_insert_with(|| {
-            let icon =
-                eframe::icon_data::from_png_bytes(include_bytes!("../logo/DontreeCrab_Splash.png"))
-                    .expect("valid DontreeCrab splash");
+            let icon = eframe::icon_data::from_png_bytes(include_bytes!(concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/../../logo/DontreeCrab_Splash.png"
+            )))
+            .expect("valid DontreeCrab splash");
             let image = egui::ColorImage::from_rgba_unmultiplied(
                 [icon.width as usize, icon.height as usize],
                 &icon.rgba,
@@ -2137,9 +2142,10 @@ impl KaraokeApp {
                 Layout::top_down(Align::Min),
                 |ui| {
                     let texture = self.about_logo.get_or_insert_with(|| {
-                        let icon = eframe::icon_data::from_png_bytes(include_bytes!(
-                            "../logo/DontreeCrab_icon.png"
-                        ))
+                        let icon = eframe::icon_data::from_png_bytes(include_bytes!(concat!(
+                            env!("CARGO_MANIFEST_DIR"),
+                            "/../../logo/DontreeCrab_icon.png"
+                        )))
                         .expect("valid DontreeCrab logo");
                         let image = egui::ColorImage::from_rgba_unmultiplied(
                             [icon.width as usize, icon.height as usize],
@@ -5155,21 +5161,24 @@ fn install_fonts(ctx: &egui::Context, custom: Option<&Path>) -> bool {
 
     fonts.font_data.insert(
         "sarabun".to_owned(),
-        Arc::new(egui::FontData::from_static(include_bytes!(
-            "../assets/fonts/Sarabun-Regular.ttf"
-        ))),
+        Arc::new(egui::FontData::from_static(include_bytes!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../assets/fonts/Sarabun-Regular.ttf"
+        )))),
     );
     fonts.font_data.insert(
         "sarabun-bold".to_owned(),
-        Arc::new(egui::FontData::from_static(include_bytes!(
-            "../assets/fonts/Sarabun-Bold.ttf"
-        ))),
+        Arc::new(egui::FontData::from_static(include_bytes!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../assets/fonts/Sarabun-Bold.ttf"
+        )))),
     );
     fonts.font_data.insert(
         "e1234".to_owned(),
-        Arc::new(egui::FontData::from_static(include_bytes!(
-            "../assets/fonts/E1234-Regular.ttf"
-        ))),
+        Arc::new(egui::FontData::from_static(include_bytes!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../assets/fonts/E1234-Regular.ttf"
+        )))),
     );
     icons::install(&mut fonts);
 
@@ -5412,7 +5421,10 @@ mod tests {
 
     #[test]
     fn imports_playlist_json_entries() {
-        let sample = Path::new(env!("CARGO_MANIFEST_DIR")).join("testdata/sample.kar");
+        let sample = std::path::absolute(
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../testdata/sample.kar"),
+        )
+        .expect("absolute sample path");
         let dir =
             std::env::temp_dir().join(format!("karaoke-playlist-import-{}", std::process::id()));
         std::fs::create_dir_all(&dir).expect("create temp dir");

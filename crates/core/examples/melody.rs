@@ -60,7 +60,8 @@ fn main() {
     let sf_path = std::env::var_os("KARAOKE_SF2")
         .map(PathBuf::from)
         .or_else(|| {
-            std::fs::read_dir("soundfonts").ok().and_then(|entries| {
+            let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../soundfonts");
+            std::fs::read_dir(dir).ok().and_then(|entries| {
                 entries.flatten().map(|entry| entry.path()).find(|path| {
                     path.extension()
                         .and_then(|ext| ext.to_str())

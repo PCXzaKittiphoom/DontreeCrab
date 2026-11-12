@@ -11,8 +11,8 @@ use std::fmt::Display;
 use std::path::PathBuf;
 use std::sync::{OnceLock, RwLock};
 
-const BUILTIN_EN: &str = include_str!("../locales/en.po");
-const BUILTIN_TH: &str = include_str!("../locales/th.po");
+const BUILTIN_EN: &str = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/../../locales/en.po"));
+const BUILTIN_TH: &str = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/../../locales/th.po"));
 
 /// A language found in the bundled or external `.po` files.
 #[derive(Clone, Debug)]

@@ -985,7 +985,7 @@ dependencies = [
  "eframe",
  "encoding_rs",
  "flate2",
- "hound",
+ "karaoke_player",
  "midly",
  "rfd",
  "roxmltree",
@@ -1938,6 +1938,25 @@ dependencies = [
  "cfg-if",
  "futures-util",
  "wasm-bindgen",
+]
+
+[[package]]
+name = "karaoke_player"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "clap",
+ "cpal",
+ "directories",
+ "encoding_rs",
+ "flate2",
+ "hound",
+ "midly",
+ "roxmltree",
+ "rustysynth",
+ "serde",
+ "serde_json",
+ "winreg",
 ]
 
 [[package]]

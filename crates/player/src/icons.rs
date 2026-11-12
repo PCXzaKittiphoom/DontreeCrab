@@ -95,9 +95,10 @@ pub fn paint_rect(painter: &Painter, rect: Rect, icon: Icon, size: f32, color: C
 pub fn install(fonts: &mut egui::FontDefinitions) {
     fonts.font_data.insert(
         "lucide".to_owned(),
-        std::sync::Arc::new(egui::FontData::from_static(include_bytes!(
-            "../assets/fonts/lucide.ttf"
-        ))),
+        std::sync::Arc::new(egui::FontData::from_static(include_bytes!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../assets/fonts/lucide.ttf"
+        )))),
     );
     fonts
         .families

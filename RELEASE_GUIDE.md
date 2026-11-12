@@ -9,15 +9,14 @@ version without publishing those assets.
 
 Copy only code and redistributable assets:
 
-- `src/`
+- `crates/core/` (library sources, tests and examples)
+- `crates/player/` (desktop app sources and `build.rs`)
+- `Cargo.toml`, `Cargo.lock` (workspace manifest and lockfile)
 - `assets/fonts/` (Sarabun, E1234, Lucide and their license files)
 - `locales/`
 - `logo/`
-- `examples/`
-- `tests/`
 - `testdata/` (synthetic fixtures only)
 - `scripts/`
-- `Cargo.toml`, `Cargo.lock`, `build.rs`
 - `README.md`, `LICENSE`, `THIRD_PARTY_NOTICES.md`, `CHANGELOG.md`,
   `CONTRIBUTING.md`, `CODE_OF_CONDUCT.md`, `SECURITY.md`, `RELEASE_GUIDE.md`
 - `.github/`
@@ -52,11 +51,13 @@ enough — rewrite history before publishing, for example with
    powershell -ExecutionPolicy Bypass -File scripts\sync-public.ps1
    ```
 
-   It mirrors `src/`, `assets/fonts/`, `locales/`, `logo/`, `Cargo.toml`,
-   `Cargo.lock` and `build.rs`, re-applies the public sanitising rules, checks
-   for private references and runs the tests/clippy. Without the script, copy
-   those items by hand. Keep the public `README.md` and `testdata/` here; do not
-   overwrite them with development copies that mention private files.
+   It mirrors `crates/core/src/`, `crates/player/src/`, the crate manifests,
+   `crates/player/build.rs`, `assets/fonts/`, `locales/`, `logo/`,
+   `Cargo.toml` and `Cargo.lock`, re-applies the public sanitising rules,
+   checks for private references and runs the tests/clippy. Without the script,
+   copy those items by hand. Keep the public `README.md`, `crates/core/tests/`,
+   `crates/core/examples/` and `testdata/` here; do not overwrite them with
+   development copies that mention private files.
 
    While iterating, add `-SkipChecks` to skip the compile-heavy tests/clippy
    (formatting and the private-reference check still run). Use the full command
@@ -91,14 +92,15 @@ enough — rewrite history before publishing, for example with
 
    ```sh
    cargo fmt --all
-   cargo test
-   cargo clippy --all-targets
+   cargo test --workspace
+   cargo clippy --workspace --all-targets
    ```
 
    Audio tests skip when no `.sf2` is present. To run them locally, set
    `KARAOKE_SF2` to a SoundFont you own; never commit it.
 
-5. Update `CHANGELOG.md` and the version in `Cargo.toml` (`Cargo.lock` too).
+5. Update `CHANGELOG.md` and the version in `[workspace.package]` in
+   `Cargo.toml` (`Cargo.lock` too).
 6. Update `README.md` if a feature, setting or format behaviour changed.
 7. Confirm third-party assets and licenses are still listed in
    `THIRD_PARTY_NOTICES.md`, and that `assets/fonts/*.txt` are present.
@@ -119,7 +121,7 @@ enough — rewrite history before publishing, for example with
 - [ ] No karaoke songs, lyrics, SoundFonts, or private screenshots
 - [ ] `git grep` for private filenames is clean
 - [ ] `cargo fmt --all -- --check` passes
-- [ ] `cargo test` passes (audio tests may skip without an SF2)
+- [ ] `cargo test --workspace` passes (audio tests may skip without an SF2)
 - [ ] `README.md` uses only `testdata/` examples
 - [ ] `CHANGELOG.md` and version numbers updated
 - [ ] `LICENSE` and `THIRD_PARTY_NOTICES.md` present

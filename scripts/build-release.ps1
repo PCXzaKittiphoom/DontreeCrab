@@ -14,7 +14,7 @@ Set-Location (Join-Path $PSScriptRoot "..")
 
 if (-not $SkipBuild) {
     Write-Host "building release..."
-    cargo build --release
+    cargo build --release -p dontreecrab
 }
 
 $version = (Select-String -Path Cargo.toml -Pattern '^version\s*=\s*"(.+)"').Matches[0].Groups[1].Value

@@ -7,6 +7,7 @@ use rustysynth::SoundFont;
 
 fn sample(name: &str) -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../..")
         .join("testdata")
         .join(name)
 }
@@ -15,7 +16,9 @@ fn soundfont() -> Option<Arc<SoundFont>> {
     let path = std::env::var_os("KARAOKE_SF2")
         .map(PathBuf::from)
         .or_else(|| {
-            let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("soundfonts");
+            let dir = Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("../..")
+                .join("soundfonts");
             std::fs::read_dir(dir)
                 .ok()?
                 .flatten()

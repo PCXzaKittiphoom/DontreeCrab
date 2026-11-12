@@ -1,0 +1,35 @@
+[package]
+name = "dontreecrab"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+description.workspace = true
+
+[[bin]]
+name = "DontreeCrab"
+path = "src/main.rs"
+
+[dependencies]
+karaoke_player = { path = "../core" }
+anyhow.workspace = true
+clap.workspace = true
+cpal.workspace = true
+directories.workspace = true
+eframe.workspace = true
+encoding_rs.workspace = true
+flate2.workspace = true
+midly.workspace = true
+rfd.workspace = true
+roxmltree.workspace = true
+rustysynth.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+
+[target."cfg(windows)".build-dependencies]
+winresource = "0.1"
+
+[target."cfg(windows)".dependencies]
+windows-sys.workspace = true
+winreg.workspace = true

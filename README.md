@@ -44,7 +44,9 @@ does not need a network connection.
 cargo build --release
 ```
 
-The executable is `target/release/DontreeCrab` (`.exe` on Windows).
+The workspace has two crates: `karaoke_player` (library) and `dontreecrab`
+(desktop app). The default member is the app, so the command above builds the
+player. The executable is `target/release/DontreeCrab` (`.exe` on Windows).
 
 ## SoundFont
 
@@ -190,7 +192,7 @@ already owns.
 ## Testing
 
 ```sh
-cargo test
+cargo test --workspace
 ```
 
 The audio tests use any `.sf2` found in `soundfonts/` or `$KARAOKE_SF2` and
@@ -210,25 +212,36 @@ no SoundFont is bundled.
 ## Project layout
 
 ```
-src/
-├─ main.rs        CLI (info / dump / lyrics / play / render)
-├─ model.rs       Song, LyricLine, Syllable, TimedEvent
-├─ tempo.rs       TempoMap: MIDI tick ↔ microseconds
-├─ midi.rs        SMF parsing and header repair
-├─ text.rs        UTF-8 / Windows-874 decoding
-├─ lyrics.rs      syllable list → timed lyric lines
-├─ kar.rs         KAR metadata + lyric extraction
-├─ kmid.rs        embedded LyrHdr XML lyrics
-├─ ncn.rs         .lyr/.cur loader
-├─ loader.rs      format sniffing
-├─ soundfont.rs   .sf2 discovery
-├─ i18n.rs        runtime .po catalogs
-├─ icons.rs       embedded Lucide icon font
-├─ gui.rs         eframe/egui player
-└─ audio/
-   ├─ player.rs   synth + event scheduler + transport
-   ├─ output.rs   cpal output stream
-   └─ wav.rs      offline render
+crates/
+├─ core/               karaoke_player library
+│  ├─ src/
+│  │  ├─ model.rs      Song, LyricLine, Syllable, TimedEvent
+│  │  ├─ tempo.rs      TempoMap: MIDI tick ↔ microseconds
+│  │  ├─ midi.rs       SMF parsing and header repair
+│  │  ├─ text.rs       UTF-8 / Windows-874 decoding
+│  │  ├─ lyrics.rs     syllable list → timed lyric lines
+│  │  ├─ kar.rs        KAR metadata + lyric extraction
+│  │  ├─ kmid.rs       embedded LyrHdr XML lyrics
+│  │  ├─ ncn.rs        .lyr/.cur loader
+│  │  ├─ loader.rs     format sniffing
+│  │  ├─ soundfont.rs  .sf2 discovery
+│  │  ├─ i18n.rs       runtime .po catalogs
+│  │  └─ audio/
+│  │     ├─ player.rs  synth + event scheduler + transport
+│  │     ├─ output.rs  cpal output stream
+│  │     └─ wav.rs     offline render
+│  ├─ tests/           integration tests
+│  └─ examples/        melody and SoundFont inspection tools
+└─ player/             dontreecrab desktop app
+   ├─ build.rs         Windows icon and resources
+   └─ src/
+      ├─ main.rs       CLI (info / dump / lyrics / play / render)
+      ├─ gui.rs        eframe/egui player
+      ├─ icons.rs      embedded Lucide icon font
+      └─ assoc.rs      Windows file associations
+
+testdata/               synthetic fixtures
+assets/ logo/ locales/  shared assets
 ```
 
 ## Contributing

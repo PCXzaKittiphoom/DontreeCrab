@@ -14,8 +14,8 @@ Thanks for helping with DontreeCrab.
 
 ```sh
 cargo build
-cargo test
-cargo clippy --all-targets
+cargo test --workspace
+cargo clippy --workspace --all-targets
 ```
 
 Audio tests need a SoundFont. Set `KARAOKE_SF2` or put any `.sf2` in

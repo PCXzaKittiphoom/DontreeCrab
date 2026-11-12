@@ -1150,6 +1150,7 @@ impl KaraokeApp {
         let mut sends_changed = false;
         let mut buffer_changed = false;
         let mut text_changed = false;
+        let popup_was_open = self.about_popup.is_some();
 
         let dt = ctx.input(|i| i.stable_dt).min(0.1);
         if self.settings_closing {
@@ -1589,7 +1590,7 @@ impl KaraokeApp {
             });
 
         let just_opened = std::mem::take(&mut self.settings_just_opened);
-        if modal.should_close() && !just_opened && self.about_popup.is_none() {
+        if modal.should_close() && !just_opened && !popup_was_open {
             close = true;
         }
 

@@ -16,3 +16,4 @@ Initial public release.
 - Windows file associations and release packaging.
 - Startup splash with version and SoundFont loading status.
 - Fullscreen state is remembered between launches.
+- Usage notice below the MIT license in About → License.

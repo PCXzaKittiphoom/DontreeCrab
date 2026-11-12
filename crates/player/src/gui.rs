@@ -3674,7 +3674,7 @@ fn draw_about_popup(ctx: &egui::Context, popup: AboutPopup) -> bool {
         )
         .show(ctx, |ui| {
             let width = match popup {
-                AboutPopup::License => 560.0,
+                AboutPopup::License => 660.0,
                 AboutPopup::Created => 620.0,
             };
             ui.set_width(width);
@@ -3699,11 +3699,35 @@ fn draw_about_popup(ctx: &egui::Context, popup: AboutPopup) -> bool {
     close || modal.should_close()
 }
 
+/// Shown below the MIT licence text in About -> License.
+const USAGE_NOTICE: &str = "DontreeCrab is only a MIDI player, intended for MIDI content that you create yourself or are otherwise entitled to use.\n\nWe do not support or accept any use of this codebase for reading, converting, playing, copying, or supporting commercial karaoke formats that are copy-protected or restricted by law, such as EMK & XMK (eXtreme Karaoke), SIB & SIBKL (SIB/SIBK Karaoke) and SMK & SMKL & SMD (Sonic Karaoke), or any program that decrypts or bypasses file protection to play, convert, copy or distribute song libraries without permission from the copyright owners.\n\nIssues and pull requests requesting such support will be rejected immediately. Anyone who uses or modifies this software for those purposes is solely responsible for their own actions; the developers and contributors accept no liability.\n\nThis software is provided \"as is\", without warranty, as stated in the MIT License. This notice is not legal advice; please check the laws in your country.";
+
 fn draw_license(ui: &mut egui::Ui) {
     egui::ScrollArea::vertical()
-        .max_height(310.0)
+        .max_height(200.0)
         .show(ui, |ui| {
             ui.add(egui::Label::new(RichText::new(LICENSE_TEXT).monospace().size(10.5)).wrap());
+        });
+    ui.add_space(10.0);
+    egui::Frame::NONE
+        .fill(Color32::from_rgb(26, 23, 14))
+        .stroke(egui::Stroke::new(1.0, Color32::from_rgb(120, 92, 30)))
+        .corner_radius(egui::CornerRadius::same(6))
+        .inner_margin(egui::Margin::symmetric(12, 8))
+        .show(ui, |ui| {
+            ui.label(
+                RichText::new(tr("Important notice"))
+                    .size(13.0)
+                    .strong()
+                    .color(Color32::from_rgb(255, 190, 90)),
+            );
+            ui.add_space(4.0);
+            egui::ScrollArea::vertical()
+                .id_salt("license_notice_scroll")
+                .max_height(190.0)
+                .show(ui, |ui| {
+                    ui.add(egui::Label::new(RichText::new(tr(USAGE_NOTICE)).size(11.0)).wrap());
+                });
         });
     ui.add_space(8.0);
     ui.label(

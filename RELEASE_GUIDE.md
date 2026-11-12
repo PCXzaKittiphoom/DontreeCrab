@@ -61,6 +61,16 @@ enough — rewrite history before publishing, for example with
    While iterating, add `-SkipChecks` to skip the compile-heavy tests/clippy
    (formatting and the private-reference check still run). Use the full command
    once before tagging a release.
+
+   To pause sync entirely while working on the development tree:
+
+   ```powershell
+   powershell -ExecutionPolicy Bypass -File scripts\sync-public.ps1 -Disable
+   powershell -ExecutionPolicy Bypass -File scripts\sync-public.ps1 -Status
+   powershell -ExecutionPolicy Bypass -File scripts\sync-public.ps1 -Enable
+   ```
+
+   `-Force` runs one sync even while the pause marker is present.
 2. If parsing or timing changed, regenerate the synthetic fixtures:
 
    ```sh

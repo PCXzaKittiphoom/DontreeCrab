@@ -26,6 +26,17 @@ const ERROR: Color32 = Color32::from_rgb(230, 90, 90);
 /// MIDI channel 9 (1-based) is where Thai karaoke files put the melody.
 const MELODY_CHANNEL: u8 = 8;
 
+const GITHUB_URL: &str = "https://github.com/PXCza/DontreeCrab";
+const APP_VERSION_LABEL: &str = concat!(env!("CARGO_PKG_VERSION"), " Beta");
+const LICENSE_TEXT: &str = include_str!("../LICENSE");
+
+/// Which About popup is open.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum AboutPopup {
+    License,
+    Created,
+}
+
 /// Actions offered by the right-click menus.
 #[derive(Clone, Copy)]
 enum MenuAction {
@@ -148,8 +159,12 @@ pub struct KaraokeApp {
     /// opened it cannot immediately close it through the backdrop.
     settings_just_opened: bool,
     /// Which settings page is selected (0 = General, 1 = Text,
-    /// 2 = SoundFont, 3 = Player, 4 = Background).
+    /// 2 = SoundFont, 3 = Player, 4 = Background, 5 = About).
     settings_section: usize,
+    /// Which About popup is open, if any.
+    about_popup: Option<AboutPopup>,
+    /// Logo texture created on first use by the About page.
+    about_logo: Option<egui::TextureHandle>,
     /// Set when a control changes; settings are written shortly afterwards.
     settings_save_at: Option<f64>,
     /// Debounce for rebuilding the audio stream when the buffer size changes.
@@ -222,6 +237,8 @@ impl Default for KaraokeApp {
             settings_open: false,
             settings_just_opened: false,
             settings_section: 0,
+            about_popup: None,
+            about_logo: None,
             settings_save_at: None,
             buffer_rebuild_at: None,
             lyric_font_loaded: false,
@@ -1110,6 +1127,7 @@ impl KaraokeApp {
         self.settings_open = true;
         self.settings_just_opened = true;
         self.settings_section = 0;
+        self.about_popup = None;
         self.settings_closing = false;
         self.settings_fade = 1.0;
     }
@@ -1247,6 +1265,17 @@ impl KaraokeApp {
                             .clicked()
                             {
                                 self.settings_section = 4;
+                            }
+
+                            // About is pinned to the bottom of the column.
+                            let remaining = ui.available_height() - 44.0;
+                            if remaining > 0.0 {
+                                ui.add_space(remaining);
+                            }
+                            if nav_row(ui, &tr("About"), self.settings_section == 5, Icon::Info)
+                                .clicked()
+                            {
+                                self.settings_section = 5;
                             }
                         },
                     );
@@ -1531,6 +1560,8 @@ impl KaraokeApp {
                                     text_changed |= self.player_page(ui);
                                 } else if self.settings_section == 4 {
                                     text_changed |= self.background_page(ui);
+                                } else if self.settings_section == 5 {
+                                    self.about_page(ui);
                                 } else {
                                     text_changed |= self.general_page(ui);
                                 }
@@ -1558,7 +1589,7 @@ impl KaraokeApp {
             });
 
         let just_opened = std::mem::take(&mut self.settings_just_opened);
-        if modal.should_close() && !just_opened {
+        if modal.should_close() && !just_opened && self.about_popup.is_none() {
             close = true;
         }
 
@@ -1595,6 +1626,7 @@ impl KaraokeApp {
 
         if close {
             self.settings_closing = true;
+            self.about_popup = None;
             self.settings_save_at = None;
             self.save_settings();
         }
@@ -1904,6 +1936,79 @@ impl KaraokeApp {
         });
 
         changed
+    }
+
+    /// The About page: logo, version, composer, tools, GitHub link and two
+    /// popups for the licence and credits.
+    fn about_page(&mut self, ui: &mut egui::Ui) {
+        ui.add_space(14.0);
+        ui.horizontal_top(|ui| {
+            ui.vertical(|ui| {
+                let texture = self.about_logo.get_or_insert_with(|| {
+                    let icon = eframe::icon_data::from_png_bytes(include_bytes!(
+                        "../logo/DontreeCrab_icon.png"
+                    ))
+                    .expect("valid DontreeCrab logo");
+                    let image = egui::ColorImage::from_rgba_unmultiplied(
+                        [icon.width as usize, icon.height as usize],
+                        &icon.rgba,
+                    );
+                    ui.ctx()
+                        .load_texture("about_logo", image, egui::TextureOptions::LINEAR)
+                });
+                egui::Frame::NONE
+                    .fill(Color32::WHITE)
+                    .corner_radius(8)
+                    .inner_margin(egui::Margin::same(4))
+                    .show(ui, |ui| {
+                        ui.add(egui::Image::new((texture.id(), egui::vec2(96.0, 96.0))));
+                    });
+                ui.add_space(8.0);
+                about_github_link(ui);
+            });
+            ui.add_space(18.0);
+            ui.vertical(|ui| {
+                ui.label(RichText::new("DontreeCrab").size(20.0).strong());
+                ui.label(RichText::new(APP_VERSION_LABEL).size(12.0).color(DIM));
+                ui.add_space(14.0);
+                ui.label(
+                    RichText::new(format!("{} :", tr("Software Composer")))
+                        .size(13.0)
+                        .strong(),
+                );
+                ui.label(RichText::new("PXCza").size(13.0));
+                ui.add_space(10.0);
+                ui.label(
+                    RichText::new(format!("{} :", tr("Tools Used")))
+                        .size(13.0)
+                        .strong(),
+                );
+                ui.label(RichText::new("DeepSeek V4.1 Flash 1017").size(13.0));
+                ui.label(RichText::new("OpenCode 2.2.7").size(13.0));
+            });
+            ui.with_layout(Layout::right_to_left(Align::Min), |ui| {
+                ui.vertical(|ui| {
+                    if ui
+                        .add_sized([120.0, 26.0], egui::Button::new(tr("License")))
+                        .clicked()
+                    {
+                        self.about_popup = Some(AboutPopup::License);
+                    }
+                    if ui
+                        .add_sized([120.0, 26.0], egui::Button::new(tr("Created")))
+                        .clicked()
+                    {
+                        self.about_popup = Some(AboutPopup::Created);
+                    }
+                });
+            });
+        });
+
+        if let Some(popup) = self.about_popup {
+            if draw_about_popup(ui.ctx(), popup) {
+                self.about_popup = None;
+            }
+        }
     }
 
     // -------------------------------------------------------------- transport
@@ -3214,6 +3319,132 @@ fn file_type_guess(path: &Path) -> String {
         }
         _ => "unknown".to_owned(),
     }
+}
+
+/// A clickable GitHub link with a Lucide external-link icon.
+fn about_github_link(ui: &mut egui::Ui) {
+    let (rect, response) = ui.allocate_exact_size(egui::vec2(140.0, 24.0), egui::Sense::click());
+    let response = response.on_hover_cursor(egui::CursorIcon::PointingHand);
+    let color = if response.hovered() { FG } else { DIM };
+    icons::paint(
+        ui.painter(),
+        Pos2::new(rect.left() + 8.0, rect.center().y),
+        Icon::ExternalLink,
+        16.0,
+        color,
+    );
+    ui.painter().text(
+        Pos2::new(rect.left() + 28.0, rect.center().y),
+        egui::Align2::LEFT_CENTER,
+        "Github",
+        FontId::proportional(13.0),
+        color,
+    );
+    if response.clicked() {
+        ui.ctx().open_url(egui::OpenUrl::new_tab(GITHUB_URL));
+    }
+}
+
+/// Draw the Licence or Created popup. Returns true when it should close.
+fn draw_about_popup(ctx: &egui::Context, popup: AboutPopup) -> bool {
+    let mut close = false;
+    let title = match popup {
+        AboutPopup::License => tr("License"),
+        AboutPopup::Created => tr("Created"),
+    };
+
+    let modal = egui::Modal::new(egui::Id::unique("about_popup"))
+        .backdrop_color(Color32::from_black_alpha(150))
+        .frame(
+            egui::Frame::NONE
+                .fill(Color32::from_rgb(8, 8, 8))
+                .stroke(egui::Stroke::new(1.5, Color32::from_gray(120)))
+                .corner_radius(egui::CornerRadius::same(12))
+                .inner_margin(egui::Margin::symmetric(22, 18)),
+        )
+        .show(ctx, |ui| {
+            ui.set_width(560.0);
+            ui.horizontal(|ui| {
+                ui.label(RichText::new(title).size(16.0).strong());
+                ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                    if ui
+                        .add_sized([84.0, 26.0], egui::Button::new(tr("Close")))
+                        .clicked()
+                    {
+                        close = true;
+                    }
+                });
+            });
+            ui.add_space(8.0);
+            match popup {
+                AboutPopup::License => draw_license(ui),
+                AboutPopup::Created => draw_created(ui),
+            }
+        });
+
+    close || modal.should_close()
+}
+
+fn draw_license(ui: &mut egui::Ui) {
+    egui::ScrollArea::vertical()
+        .max_height(310.0)
+        .show(ui, |ui| {
+            ui.add(egui::Label::new(RichText::new(LICENSE_TEXT).monospace().size(10.5)).wrap());
+        });
+    ui.add_space(8.0);
+    ui.label(
+        RichText::new(tr(
+            "Bundled fonts: Sarabun/E1234 OFL-1.1, Lucide ISC. See THIRD_PARTY_NOTICES.md.",
+        ))
+        .size(11.0)
+        .color(DIM),
+    );
+}
+
+fn draw_created(ui: &mut egui::Ui) {
+    egui::ScrollArea::vertical()
+        .max_height(360.0)
+        .show(ui, |ui| {
+            about_section(ui, &tr("Software Composer"), "PXCza");
+            about_section(
+                ui,
+                &tr("Tools Used"),
+                "DeepSeek V4.1 Flash 1017\nOpenCode 2.2.7",
+            );
+            about_section(
+                ui,
+                &tr("Built with"),
+                "Rust · eframe/egui · cpal · rustysynth · midly · serde",
+            );
+            let os = match std::env::consts::OS {
+                "windows" => "Windows PC",
+                "linux" => "Linux PC",
+                "macos" => "macOS",
+                other => other,
+            };
+            about_section(
+                ui,
+                &tr("Hardware"),
+                &format!(
+                    "{os} · {} · 44.1 kHz / 2 ch / f32",
+                    std::env::consts::ARCH
+                ),
+            );
+            about_section(
+                ui,
+                &tr("Licenses"),
+                "Application: MIT\nSarabun / E1234: SIL OFL 1.1\nLucide: ISC\negui fonts: MIT / OFL-1.1 / Ubuntu Font Licence 1.0",
+            );
+            about_section(ui, &tr("Privacy"), &tr("No telemetry. Works offline."));
+        });
+}
+
+fn about_section(ui: &mut egui::Ui, title: &str, body: &str) {
+    ui.label(RichText::new(title).size(13.0).strong());
+    for line in body.lines() {
+        ui.label(RichText::new(line).size(12.0).color(DIM));
+    }
+    ui.add_space(8.0);
 }
 
 /// One entry in the settings dialog's left navigation column.

@@ -353,3 +353,36 @@ msgstr ""
 
 msgid " KEY : {} "
 msgstr ""
+
+msgid "About"
+msgstr ""
+
+msgid "Software Composer"
+msgstr ""
+
+msgid "Tools Used"
+msgstr ""
+
+msgid "License"
+msgstr ""
+
+msgid "Created"
+msgstr ""
+
+msgid "Bundled fonts: Sarabun/E1234 OFL-1.1, Lucide ISC. See THIRD_PARTY_NOTICES.md."
+msgstr ""
+
+msgid "Built with"
+msgstr ""
+
+msgid "Hardware"
+msgstr ""
+
+msgid "Licenses"
+msgstr ""
+
+msgid "Privacy"
+msgstr ""
+
+msgid "No telemetry. Works offline."
+msgstr ""

@@ -32,6 +32,8 @@ pub enum Icon {
     AudioLines,
     Image,
     Type,
+    Info,
+    ExternalLink,
 }
 
 impl Icon {
@@ -61,6 +63,8 @@ impl Icon {
             Self::AudioLines => "\u{e55a}",
             Self::Image => "\u{e0f6}",
             Self::Type => "\u{e198}",
+            Self::Info => "\u{e0f9}",
+            Self::ExternalLink => "\u{e0b9}",
         }
     }
 

@@ -27,6 +27,8 @@ does not need a network connection.
 - Runtime translations from GNU gettext `.po` files (English and Thai included).
 - Window/file associations on Windows.
 - Large, multi-layer SoundFont support with configurable polyphony.
+- About page with version, credits, GitHub link, MIT licence and a build/credits
+  popup.
 
 ## Requirements
 

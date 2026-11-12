@@ -346,3 +346,36 @@ msgstr "กำหนดเอง"
 
 msgid " KEY : {} "
 msgstr " คีย์ : {} "
+
+msgid "About"
+msgstr "เกี่ยวกับ"
+
+msgid "Software Composer"
+msgstr "ผู้พัฒนา"
+
+msgid "Tools Used"
+msgstr "เครื่องมือที่ใช้"
+
+msgid "License"
+msgstr "สัญญาอนุญาต"
+
+msgid "Created"
+msgstr "เครดิต"
+
+msgid "Bundled fonts: Sarabun/E1234 OFL-1.1, Lucide ISC. See THIRD_PARTY_NOTICES.md."
+msgstr "ฟอนต์ที่รวมมา: Sarabun/E1234 OFL-1.1, Lucide ISC ดู THIRD_PARTY_NOTICES.md"
+
+msgid "Built with"
+msgstr "สร้างด้วย"
+
+msgid "Hardware"
+msgstr "อุปกรณ์"
+
+msgid "Licenses"
+msgstr "สัญญาอนุญาต"
+
+msgid "Privacy"
+msgstr "ความเป็นส่วนตัว"
+
+msgid "No telemetry. Works offline."
+msgstr "ไม่เก็บ telemetry และทำงานแบบออฟไลน์"

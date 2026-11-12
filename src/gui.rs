@@ -1,7 +1,7 @@
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::mpsc::{Receiver, Sender};
+use std::sync::mpsc::{Receiver, Sender, TryRecvError};
 
 use anyhow::Result;
 use eframe::egui;
@@ -52,6 +52,7 @@ enum MenuAction {
     ToggleRepeat,
     ClearPlaylist,
     Settings,
+    About,
     Exit,
     Remove(usize),
 }
@@ -123,6 +124,21 @@ pub struct KaraokeApp {
     playback: Option<Playback>,
     sound_font: Option<Arc<SoundFont>>,
     sound_font_path: Option<PathBuf>,
+    /// True while the opening splash is shown.
+    startup_active: bool,
+    startup_status: String,
+    startup_detail: String,
+    startup_started: f64,
+    startup_ready_at: Option<f64>,
+    startup_receiver: Option<Receiver<Result<Arc<SoundFont>, String>>>,
+    startup_path: Option<PathBuf>,
+    startup_texture: Option<egui::TextureHandle>,
+    /// The splash window has been centred once on its monitor.
+    splash_centered: bool,
+    /// Frames left before the expanded main window is centred.
+    center_main_pending: u8,
+    pending_open: Option<PathBuf>,
+    pending_playlist: Vec<PathBuf>,
     volume: f32,
     transpose: i32,
     paused: bool,
@@ -210,6 +226,18 @@ impl Default for KaraokeApp {
             playback: None,
             sound_font: None,
             sound_font_path: None,
+            startup_active: false,
+            startup_status: String::new(),
+            startup_detail: String::new(),
+            startup_started: 0.0,
+            startup_ready_at: None,
+            startup_receiver: None,
+            startup_path: None,
+            startup_texture: None,
+            splash_centered: false,
+            center_main_pending: 0,
+            pending_open: None,
+            pending_playlist: Vec::new(),
             volume: 0.7,
             transpose: 0,
             paused: true,
@@ -267,11 +295,12 @@ pub fn run(initial: Vec<PathBuf>) -> eframe::Result {
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
             .with_icon(icon)
-            .with_inner_size([1024.0, 640.0])
-            // Keep the default size as the minimum: the top bar, lyrics and
-            // transport need this much room and the window cannot shrink
-            // below it.
-            .with_min_inner_size([1024.0, 640.0])
+            // The window opens as a small, borderless splash and is expanded
+            // to the real size once the SoundFont is ready.
+            .with_inner_size([480.0, 324.0])
+            .with_min_inner_size([480.0, 324.0])
+            .with_resizable(false)
+            .with_decorations(false)
             .with_title("DontreeCrab"),
         ..Default::default()
     };
@@ -296,14 +325,13 @@ impl KaraokeApp {
         app.transpose = app.settings.transpose;
 
         let stored_font = app.settings.soundfont.clone().filter(|path| path.is_file());
-        app.reload_sound_font(stored_font);
+        app.begin_startup(stored_font);
 
-        // Nothing is auto-played and the playlist always starts empty.
-        // Only files passed on the command line (or by a file association)
-        // are opened; the first one plays and the rest join the playlist.
+        // Files passed on the command line are opened once the startup splash
+        // has finished and the SoundFont is ready.
         if let Some((first, rest)) = initial.split_first() {
-            app.open(first.clone());
-            let _ = app.extend_playlist(rest.to_vec());
+            app.pending_open = Some(first.clone());
+            app.pending_playlist = rest.to_vec();
         }
 
         app
@@ -373,6 +401,159 @@ impl KaraokeApp {
             let _ = playback.commands.send(Command::SetSpeed(speed));
         }
         self.applied_speed = speed;
+    }
+
+    /// Resolve the SoundFont and start loading it in the background. The
+    /// opening splash stays visible until the worker finishes.
+    fn begin_startup(&mut self, stored: Option<PathBuf>) {
+        self.startup_active = true;
+        self.splash_centered = false;
+        self.startup_started = 0.0;
+        self.startup_ready_at = None;
+        self.startup_status = tr("Starting DontreeCrab");
+        self.startup_detail.clear();
+
+        let resolved = match soundfont::resolve(stored.as_deref()) {
+            Ok(path) => std::path::absolute(&path).unwrap_or(path),
+            Err(err) => {
+                self.error = Some(format!("{err:#}"));
+                self.startup_status = tr("No SoundFont found");
+                self.startup_detail = tr("Open Settings → SoundFont to choose one");
+                return;
+            }
+        };
+
+        self.startup_detail = resolved
+            .file_name()
+            .map(|name| name.to_string_lossy().into_owned())
+            .unwrap_or_default();
+        self.startup_path = Some(resolved.clone());
+
+        let (sender, receiver) = std::sync::mpsc::channel();
+        self.startup_receiver = Some(receiver);
+        std::thread::spawn(move || {
+            let result = soundfont::load(&resolved).map_err(|err| format!("{err:#}"));
+            let _ = sender.send(result);
+        });
+    }
+
+    fn poll_startup(&mut self, ctx: &egui::Context) {
+        let now = ctx.input(|i| i.time);
+        if self.startup_started == 0.0 {
+            self.startup_started = now;
+        }
+
+        if let Some(receiver) = &self.startup_receiver {
+            match receiver.try_recv() {
+                Ok(Ok(font)) => {
+                    self.sound_font = Some(font);
+                    self.sound_font_path = self.startup_path.clone();
+                    self.startup_receiver = None;
+                    self.startup_status = tr("Ready");
+                    self.startup_detail.clear();
+                    self.startup_ready_at = Some(now + 0.6);
+                }
+                Ok(Err(err)) => {
+                    self.startup_receiver = None;
+                    self.error = Some(err);
+                    self.startup_status = tr("SoundFont not loaded");
+                    self.startup_detail = tr("Open Settings → SoundFont to choose one");
+                    self.startup_ready_at = Some(now + 1.0);
+                }
+                Err(TryRecvError::Empty) => {
+                    if now - self.startup_started > 0.2 {
+                        self.startup_status = tr("Loading SoundFont");
+                    }
+                }
+                Err(TryRecvError::Disconnected) => {
+                    self.startup_receiver = None;
+                    self.error = Some(tr("SoundFont loader stopped unexpectedly"));
+                    self.startup_status = tr("SoundFont not loaded");
+                    self.startup_ready_at = Some(now + 1.0);
+                }
+            }
+        }
+
+        if self.startup_receiver.is_none() && self.startup_ready_at.is_none() {
+            self.startup_ready_at = Some(now + 0.9);
+        }
+        if let Some(until) = self.startup_ready_at {
+            if now >= until {
+                self.finish_startup();
+            }
+        }
+    }
+
+    fn finish_startup(&mut self) {
+        self.startup_active = false;
+        self.startup_ready_at = None;
+        if let Some(first) = self.pending_open.take() {
+            self.open(first);
+            let rest = std::mem::take(&mut self.pending_playlist);
+            let _ = self.extend_playlist(rest);
+        }
+    }
+
+    fn draw_splash(&mut self, ui: &mut egui::Ui) {
+        let rect = ui.max_rect();
+        let painter = ui.painter();
+        painter.rect_filled(rect, 0.0, BG);
+
+        let texture = self.startup_texture.get_or_insert_with(|| {
+            let icon =
+                eframe::icon_data::from_png_bytes(include_bytes!("../logo/DontreeCrab_Splash.png"))
+                    .expect("valid DontreeCrab splash");
+            let image = egui::ColorImage::from_rgba_unmultiplied(
+                [icon.width as usize, icon.height as usize],
+                &icon.rgba,
+            );
+            ui.ctx()
+                .load_texture("startup_splash", image, egui::TextureOptions::LINEAR)
+        });
+
+        // Cover the window without stretching the artwork.
+        let image_size = texture.size_vec2();
+        let scale = (rect.width() / image_size.x).max(rect.height() / image_size.y);
+        let draw_rect = Rect::from_center_size(rect.center(), image_size * scale);
+        painter.image(
+            texture.id(),
+            draw_rect,
+            Rect::from_min_max(Pos2::ZERO, Pos2::new(1.0, 1.0)),
+            Color32::WHITE,
+        );
+
+        let ink = Color32::from_rgb(18, 24, 16);
+        painter.text(
+            Pos2::new(rect.right() - 24.0, rect.top() + 20.0),
+            egui::Align2::RIGHT_TOP,
+            APP_VERSION_LABEL,
+            FontId::proportional(14.0),
+            ink,
+        );
+
+        let now = ui.ctx().input(|i| i.time);
+        let dots = if self.startup_receiver.is_some() {
+            ["", ".", "..", "..."][((now * 2.0) as usize) % 4]
+        } else {
+            ""
+        };
+        let status = format!("{}{}", self.startup_status, dots);
+        painter.text(
+            Pos2::new(rect.left() + 24.0, rect.bottom() - 24.0),
+            egui::Align2::LEFT_BOTTOM,
+            status,
+            FontId::proportional(13.0),
+            ink,
+        );
+        if !self.startup_detail.is_empty() {
+            painter.text(
+                Pos2::new(rect.left() + 24.0, rect.bottom() - 44.0),
+                egui::Align2::LEFT_BOTTOM,
+                &self.startup_detail,
+                FontId::proportional(11.0),
+                Color32::from_gray(55),
+            );
+        }
     }
 
     fn reload_sound_font(&mut self, explicit: Option<PathBuf>) {
@@ -1942,13 +2123,14 @@ impl KaraokeApp {
     /// The About page: logo, version, composer, tools, GitHub link and two
     /// popups for the licence and credits.
     fn about_page(&mut self, ui: &mut egui::Ui) {
-        ui.add_space(12.0);
+        ui.add_space(22.0);
         let page_rect = ui.max_rect();
         let button_top = ui.cursor().top();
 
         ui.horizontal_top(|ui| {
             ui.spacing_mut().item_spacing.x = 0.0;
-            let page_width = page_rect.width();
+            ui.add_space(20.0);
+            let page_width = page_rect.width() - 20.0;
 
             ui.allocate_ui_with_layout(
                 egui::vec2(120.0, 190.0),
@@ -1969,9 +2151,12 @@ impl KaraokeApp {
                     egui::Frame::NONE
                         .fill(Color32::WHITE)
                         .corner_radius(8)
-                        .inner_margin(egui::Margin::same(4))
+                        .inner_margin(egui::Margin::same(0))
                         .show(ui, |ui| {
-                            ui.add(egui::Image::new((texture.id(), egui::vec2(96.0, 96.0))));
+                            ui.add(
+                                egui::Image::new((texture.id(), egui::vec2(104.0, 104.0)))
+                                    .corner_radius(8),
+                            );
                         });
                     ui.add_space(0.0);
                     about_github_link(ui);
@@ -1981,7 +2166,7 @@ impl KaraokeApp {
             ui.add_space(16.0);
 
             ui.allocate_ui_with_layout(
-                egui::vec2(page_width - 250.0, 190.0),
+                egui::vec2(page_width - 260.0, 190.0),
                 Layout::top_down(Align::Min),
                 |ui| {
                     ui.label(RichText::new("DontreeCrab").size(18.0).strong());
@@ -2001,12 +2186,31 @@ impl KaraokeApp {
                     );
                     ui.label(RichText::new("DeepSeek V4.1 Flash 1017").size(13.0));
                     ui.label(RichText::new("OpenCode 2.2.7").size(13.0));
+                    ui.add_space(10.0);
+                    ui.label(
+                        RichText::new(format!("{} :", tr("Hardware")))
+                            .size(13.0)
+                            .strong(),
+                    );
+                    let os = match std::env::consts::OS {
+                        "windows" => "Windows PC",
+                        "linux" => "Linux PC",
+                        "macos" => "macOS",
+                        other => other,
+                    };
+                    ui.label(
+                        RichText::new(format!(
+                            "{os} · {} · 44.1 kHz / 2 ch / f32",
+                            std::env::consts::ARCH
+                        ))
+                        .size(13.0),
+                    );
                 },
             );
         });
 
         let license_rect = Rect::from_min_size(
-            Pos2::new(page_rect.right() - 120.0, button_top),
+            Pos2::new(page_rect.right() - 132.0, button_top),
             egui::vec2(120.0, 28.0),
         );
         if ui
@@ -2848,6 +3052,10 @@ impl KaraokeApp {
             }
             MenuAction::Remove(index) => self.remove_playlist_entry(index),
             MenuAction::Settings => self.open_settings(),
+            MenuAction::About => {
+                self.open_settings();
+                self.settings_section = 5;
+            }
             MenuAction::ToggleFullscreen => {
                 let fullscreen = ctx.input(|i| i.viewport().fullscreen.unwrap_or(false));
                 ctx.send_viewport_cmd(egui::ViewportCommand::Fullscreen(!fullscreen));
@@ -2979,6 +3187,9 @@ impl KaraokeApp {
                                 }
                                 if menu_item(ui, Icon::Settings, &tr("Setting…")) {
                                     action = Some(MenuAction::Settings);
+                                }
+                                if menu_item(ui, Icon::Info, &tr("About")) {
+                                    action = Some(MenuAction::About);
                                 }
                                 ui.separator();
                                 if menu_item(ui, Icon::LogOut, &tr("Exit")) {
@@ -3163,6 +3374,52 @@ impl KaraokeApp {
 impl eframe::App for KaraokeApp {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         let ctx = ui.ctx().clone();
+        if self.startup_active {
+            self.poll_startup(&ctx);
+            if self.startup_active {
+                // Centre the borderless splash once, then let it paint.
+                if !self.splash_centered {
+                    if let Some(cmd) = egui::ViewportCommand::center_on_screen(&ctx) {
+                        ctx.send_viewport_cmd(cmd);
+                        self.splash_centered = true;
+                    }
+                }
+                self.draw_splash(ui);
+                ctx.request_repaint();
+                return;
+            }
+
+            // Startup finished: turn the splash back into the main window.
+            ctx.send_viewport_cmd(egui::ViewportCommand::Decorations(true));
+            ctx.send_viewport_cmd(egui::ViewportCommand::Resizable(true));
+            ctx.send_viewport_cmd(egui::ViewportCommand::MinInnerSize(egui::vec2(
+                1024.0, 640.0,
+            )));
+            ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(egui::vec2(1024.0, 640.0)));
+            ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
+            self.center_main_pending = 5;
+            // Let the window manager apply the new size before painting the
+            // main interface, so it never flashes inside the small splash.
+            ctx.request_repaint();
+            return;
+        }
+        if self.center_main_pending > 0 {
+            self.center_main_pending -= 1;
+            let wide = ctx.input(|i| {
+                i.viewport()
+                    .inner_rect
+                    .map(|rect| rect.width() >= 900.0)
+                    .unwrap_or(false)
+            });
+            if wide || self.center_main_pending == 0 {
+                if let Some(cmd) = egui::ViewportCommand::center_on_screen(&ctx) {
+                    ctx.send_viewport_cmd(cmd);
+                }
+                self.center_main_pending = 0;
+            } else {
+                ctx.request_repaint();
+            }
+        }
         // Start the song card timer on the first frame after a song opens.
         if self.song_card_pending {
             self.song_card_pending = false;
@@ -3384,7 +3641,11 @@ fn draw_about_popup(ctx: &egui::Context, popup: AboutPopup) -> bool {
                 .inner_margin(egui::Margin::symmetric(22, 18)),
         )
         .show(ctx, |ui| {
-            ui.set_width(560.0);
+            let width = match popup {
+                AboutPopup::License => 560.0,
+                AboutPopup::Created => 620.0,
+            };
+            ui.set_width(width);
             ui.horizontal(|ui| {
                 ui.label(RichText::new(title).size(16.0).strong());
                 ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
@@ -3423,49 +3684,105 @@ fn draw_license(ui: &mut egui::Ui) {
 }
 
 fn draw_created(ui: &mut egui::Ui) {
-    egui::ScrollArea::vertical()
-        .max_height(420.0)
-        .show(ui, |ui| {
-            about_section(ui, &tr("Software Composer"), "PXCza");
-            about_section(
-                ui,
-                &tr("Tools Used"),
-                "DeepSeek V4.1 Flash 1017\nOpenCode 2.2.7",
-            );
-            about_section(
-                ui,
-                &tr("Built with"),
-                "Rust · eframe/egui · cpal · rustysynth · midly · serde",
-            );
-            let os = match std::env::consts::OS {
-                "windows" => "Windows PC",
-                "linux" => "Linux PC",
-                "macos" => "macOS",
-                other => other,
-            };
-            about_section(
-                ui,
-                &tr("Hardware"),
-                &format!(
-                    "{os} · {} · 44.1 kHz / 2 ch / f32",
-                    std::env::consts::ARCH
-                ),
-            );
-            about_section(
-                ui,
-                &tr("Licenses"),
-                "Application: MIT\nSarabun / E1234: SIL OFL 1.1\nLucide: ISC\negui fonts: MIT / OFL-1.1 / Ubuntu Font Licence 1.0",
-            );
-            about_section(ui, &tr("Privacy"), &tr("No telemetry. Works offline."));
-        });
-}
+    let provider_terms = tr("Provider terms");
+    let rows: Vec<(&str, String, &str)> = vec![
+        (
+            "DeepSeek V4.1 Flash 1017",
+            tr("AI coding assistant"),
+            &provider_terms,
+        ),
+        ("OpenCode 2.2.7", tr("Development environment"), "MIT"),
+        ("Rust", tr("Programming language"), "MIT / Apache-2.0"),
+        ("eframe / egui", tr("GUI and rendering"), "MIT / Apache-2.0"),
+        ("cpal", tr("Audio output"), "Apache-2.0"),
+        ("rustysynth", tr("SoundFont synthesis"), "MIT"),
+        ("midly", tr("MIDI parsing"), "Unlicense / MIT"),
+        (
+            "serde / serde_json",
+            tr("Configuration and JSON"),
+            "MIT / Apache-2.0",
+        ),
+        ("flate2", tr("KMID decompression"), "MIT / Apache-2.0"),
+        ("roxmltree", tr("KMID XML parsing"), "MIT / Apache-2.0"),
+        (
+            "encoding_rs",
+            tr("Text encoding"),
+            "Apache-2.0 / MIT + BSD-3",
+        ),
+        ("clap", tr("Command-line interface"), "MIT / Apache-2.0"),
+        ("rfd", tr("Native file dialogs"), "MIT"),
+        ("directories", tr("Config paths"), "MIT / Apache-2.0"),
+        ("Sarabun", tr("UI / lyric font"), "OFL-1.1"),
+        ("E1234", tr("Clock font"), "OFL-1.1"),
+        ("Lucide", tr("Icons"), "ISC"),
+        (
+            "egui default fonts",
+            tr("UI fallback fonts"),
+            "MIT / OFL-1.1 / UFL-1.0",
+        ),
+    ];
 
-fn about_section(ui: &mut egui::Ui, title: &str, body: &str) {
-    ui.label(RichText::new(title).size(13.0).strong());
-    for line in body.lines() {
-        ui.label(RichText::new(line).size(12.0).color(DIM));
-    }
-    ui.add_space(8.0);
+    egui::ScrollArea::vertical()
+        .max_height(360.0)
+        .show(ui, |ui| {
+            let available = ui.available_width();
+            egui::Grid::new("about_created_grid")
+                .num_columns(3)
+                .spacing([16.0, 6.0])
+                .striped(true)
+                .show(ui, |ui| {
+                    let tool_width = 165.0;
+                    let license_width = 175.0;
+                    let purpose_width = (available - tool_width - license_width - 32.0).max(150.0);
+
+                    ui.add_sized(
+                        [tool_width, 18.0],
+                        egui::Label::new(RichText::new(tr("Tool")).size(11.0).strong())
+                            .halign(Align::LEFT),
+                    );
+                    ui.add_sized(
+                        [purpose_width, 18.0],
+                        egui::Label::new(RichText::new(tr("Used for")).size(11.0).strong())
+                            .halign(Align::LEFT),
+                    );
+                    ui.add_sized(
+                        [license_width, 18.0],
+                        egui::Label::new(RichText::new(tr("License")).size(11.0).strong())
+                            .halign(Align::LEFT),
+                    );
+                    ui.end_row();
+
+                    for (name, purpose, license) in rows {
+                        ui.add_sized(
+                            [tool_width, 18.0],
+                            egui::Label::new(RichText::new(name).size(11.5)).halign(Align::LEFT),
+                        );
+                        ui.add_sized(
+                            [purpose_width, 18.0],
+                            egui::Label::new(RichText::new(purpose).size(11.0).color(DIM))
+                                .halign(Align::LEFT),
+                        );
+                        ui.add_sized(
+                            [license_width, 18.0],
+                            egui::Label::new(RichText::new(license).size(11.0).color(DIM))
+                                .halign(Align::LEFT),
+                        );
+                        ui.end_row();
+                    }
+                });
+            ui.add_space(8.0);
+            ui.separator();
+            ui.label(
+                RichText::new(tr("Application license: MIT"))
+                    .size(11.0)
+                    .color(DIM),
+            );
+            ui.label(
+                RichText::new(tr("No telemetry. Works offline."))
+                    .size(11.0)
+                    .color(DIM),
+            );
+        });
 }
 
 /// One entry in the settings dialog's left navigation column.

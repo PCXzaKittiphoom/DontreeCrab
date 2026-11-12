@@ -379,3 +379,90 @@ msgstr "ความเป็นส่วนตัว"
 
 msgid "No telemetry. Works offline."
 msgstr "ไม่เก็บ telemetry และทำงานแบบออฟไลน์"
+
+msgid "Tool"
+msgstr "เครื่องมือ"
+
+msgid "Used for"
+msgstr "ใช้ทำอะไร"
+
+msgid "AI coding assistant"
+msgstr "ผู้ช่วยเขียนโค้ด AI"
+
+msgid "Provider terms"
+msgstr "เงื่อนไขผู้ให้บริการ"
+
+msgid "Development environment"
+msgstr "สภาพแวดล้อมสำหรับพัฒนา"
+
+msgid "Programming language"
+msgstr "ภาษาที่ใช้พัฒนา"
+
+msgid "GUI and rendering"
+msgstr "หน้าจอและกราฟิก"
+
+msgid "Audio output"
+msgstr "ระบบส่งออกเสียง"
+
+msgid "SoundFont synthesis"
+msgstr "สังเคราะห์เสียง SoundFont"
+
+msgid "MIDI parsing"
+msgstr "อ่านและแปลงไฟล์ MIDI"
+
+msgid "Configuration and JSON"
+msgstr "ตั้งค่าและ JSON"
+
+msgid "KMID decompression"
+msgstr "แตกข้อมูล KMID"
+
+msgid "KMID XML parsing"
+msgstr "อ่าน XML ของ KMID"
+
+msgid "Text encoding"
+msgstr "ถอดรหัสข้อความ"
+
+msgid "Command-line interface"
+msgstr "อินเทอร์เฟซบรรทัดคำสั่ง"
+
+msgid "Native file dialogs"
+msgstr "ไดอะล็อกไฟล์ของระบบ"
+
+msgid "Config paths"
+msgstr "ตำแหน่งไฟล์ตั้งค่า"
+
+msgid "UI / lyric font"
+msgstr "ฟอนต์ UI / เนื้อเพลง"
+
+msgid "Clock font"
+msgstr "ฟอนต์นาฬิกา"
+
+msgid "Icons"
+msgstr "ไอคอน"
+
+msgid "UI fallback fonts"
+msgstr "ฟอนต์สำรอง UI"
+
+msgid "Application license: MIT"
+msgstr "สัญญาอนุญาตโปรแกรม: MIT"
+
+msgid "Starting DontreeCrab"
+msgstr "กำลังเริ่ม DontreeCrab"
+
+msgid "Loading SoundFont"
+msgstr "กำลังโหลดซาวด์ฟอนต์"
+
+msgid "Ready"
+msgstr "พร้อมใช้งาน"
+
+msgid "SoundFont not loaded"
+msgstr "ยังไม่ได้โหลดซาวด์ฟอนต์"
+
+msgid "No SoundFont found"
+msgstr "ไม่พบซาวด์ฟอนต์"
+
+msgid "Open Settings → SoundFont to choose one"
+msgstr "เปิด Settings → SoundFont เพื่อเลือกไฟล์"
+
+msgid "SoundFont loader stopped unexpectedly"
+msgstr "ตัวโหลดซาวด์ฟอนต์หยุดทำงานกะทันหัน"

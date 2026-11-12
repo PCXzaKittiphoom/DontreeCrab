@@ -386,3 +386,90 @@ msgstr ""
 
 msgid "No telemetry. Works offline."
 msgstr ""
+
+msgid "Tool"
+msgstr ""
+
+msgid "Used for"
+msgstr ""
+
+msgid "AI coding assistant"
+msgstr ""
+
+msgid "Provider terms"
+msgstr ""
+
+msgid "Development environment"
+msgstr ""
+
+msgid "Programming language"
+msgstr ""
+
+msgid "GUI and rendering"
+msgstr ""
+
+msgid "Audio output"
+msgstr ""
+
+msgid "SoundFont synthesis"
+msgstr ""
+
+msgid "MIDI parsing"
+msgstr ""
+
+msgid "Configuration and JSON"
+msgstr ""
+
+msgid "KMID decompression"
+msgstr ""
+
+msgid "KMID XML parsing"
+msgstr ""
+
+msgid "Text encoding"
+msgstr ""
+
+msgid "Command-line interface"
+msgstr ""
+
+msgid "Native file dialogs"
+msgstr ""
+
+msgid "Config paths"
+msgstr ""
+
+msgid "UI / lyric font"
+msgstr ""
+
+msgid "Clock font"
+msgstr ""
+
+msgid "Icons"
+msgstr ""
+
+msgid "UI fallback fonts"
+msgstr ""
+
+msgid "Application license: MIT"
+msgstr ""
+
+msgid "Starting DontreeCrab"
+msgstr ""
+
+msgid "Loading SoundFont"
+msgstr ""
+
+msgid "Ready"
+msgstr ""
+
+msgid "SoundFont not loaded"
+msgstr ""
+
+msgid "No SoundFont found"
+msgstr ""
+
+msgid "Open Settings → SoundFont to choose one"
+msgstr ""
+
+msgid "SoundFont loader stopped unexpectedly"
+msgstr ""

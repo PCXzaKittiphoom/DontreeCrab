@@ -57,6 +57,10 @@ enough — rewrite history before publishing, for example with
    for private references and runs the tests/clippy. Without the script, copy
    those items by hand. Keep the public `README.md` and `testdata/` here; do not
    overwrite them with development copies that mention private files.
+
+   While iterating, add `-SkipChecks` to skip the compile-heavy tests/clippy
+   (formatting and the private-reference check still run). Use the full command
+   once before tagging a release.
 2. If parsing or timing changed, regenerate the synthetic fixtures:
 
    ```sh

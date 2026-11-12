@@ -5,6 +5,8 @@ in Rust with `eframe`/`egui` and `rustysynth`.
 
 [GitHub repository](https://github.com/PCXzaKittiphoom/DontreeCrab)
 
+> **Status:** 0.1.0 Beta
+
 DontreeCrab focuses on accurate lyric timing, Thai karaoke conventions, a clean
 monochrome interface, and offline playback. It does not collect telemetry and
 does not need a network connection.

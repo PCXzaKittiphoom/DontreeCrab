@@ -1,8 +1,8 @@
 # Changelog
 
-## 0.1.0
+## 0.1.0 Beta
 
-Initial public release.
+Initial public beta release.
 
 - KAR, NCN, KMID and plain MIDI playback.
 - Timed lyric display with Thai leading-vowel handling and two cursor styles.

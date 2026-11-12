@@ -1942,68 +1942,88 @@ impl KaraokeApp {
     /// The About page: logo, version, composer, tools, GitHub link and two
     /// popups for the licence and credits.
     fn about_page(&mut self, ui: &mut egui::Ui) {
-        ui.add_space(14.0);
+        ui.add_space(12.0);
+        let page_rect = ui.max_rect();
+        let button_top = ui.cursor().top();
+
         ui.horizontal_top(|ui| {
-            ui.vertical(|ui| {
-                let texture = self.about_logo.get_or_insert_with(|| {
-                    let icon = eframe::icon_data::from_png_bytes(include_bytes!(
-                        "../logo/DontreeCrab_icon.png"
-                    ))
-                    .expect("valid DontreeCrab logo");
-                    let image = egui::ColorImage::from_rgba_unmultiplied(
-                        [icon.width as usize, icon.height as usize],
-                        &icon.rgba,
-                    );
-                    ui.ctx()
-                        .load_texture("about_logo", image, egui::TextureOptions::LINEAR)
-                });
-                egui::Frame::NONE
-                    .fill(Color32::WHITE)
-                    .corner_radius(8)
-                    .inner_margin(egui::Margin::same(4))
-                    .show(ui, |ui| {
-                        ui.add(egui::Image::new((texture.id(), egui::vec2(96.0, 96.0))));
+            ui.spacing_mut().item_spacing.x = 0.0;
+            let page_width = page_rect.width();
+
+            ui.allocate_ui_with_layout(
+                egui::vec2(120.0, 190.0),
+                Layout::top_down(Align::Min),
+                |ui| {
+                    let texture = self.about_logo.get_or_insert_with(|| {
+                        let icon = eframe::icon_data::from_png_bytes(include_bytes!(
+                            "../logo/DontreeCrab_icon.png"
+                        ))
+                        .expect("valid DontreeCrab logo");
+                        let image = egui::ColorImage::from_rgba_unmultiplied(
+                            [icon.width as usize, icon.height as usize],
+                            &icon.rgba,
+                        );
+                        ui.ctx()
+                            .load_texture("about_logo", image, egui::TextureOptions::LINEAR)
                     });
-                ui.add_space(8.0);
-                about_github_link(ui);
-            });
-            ui.add_space(18.0);
-            ui.vertical(|ui| {
-                ui.label(RichText::new("DontreeCrab").size(20.0).strong());
-                ui.label(RichText::new(APP_VERSION_LABEL).size(12.0).color(DIM));
-                ui.add_space(14.0);
-                ui.label(
-                    RichText::new(format!("{} :", tr("Software Composer")))
-                        .size(13.0)
-                        .strong(),
-                );
-                ui.label(RichText::new("PXCza").size(13.0));
-                ui.add_space(10.0);
-                ui.label(
-                    RichText::new(format!("{} :", tr("Tools Used")))
-                        .size(13.0)
-                        .strong(),
-                );
-                ui.label(RichText::new("DeepSeek V4.1 Flash 1017").size(13.0));
-                ui.label(RichText::new("OpenCode 2.2.7").size(13.0));
-            });
-            ui.with_layout(Layout::right_to_left(Align::Min), |ui| {
-                ui.vertical(|ui| {
-                    if ui
-                        .add_sized([120.0, 26.0], egui::Button::new(tr("License")))
-                        .clicked()
-                    {
-                        self.about_popup = Some(AboutPopup::License);
-                    }
-                    if ui
-                        .add_sized([120.0, 26.0], egui::Button::new(tr("Created")))
-                        .clicked()
-                    {
-                        self.about_popup = Some(AboutPopup::Created);
-                    }
-                });
-            });
+                    egui::Frame::NONE
+                        .fill(Color32::WHITE)
+                        .corner_radius(8)
+                        .inner_margin(egui::Margin::same(4))
+                        .show(ui, |ui| {
+                            ui.add(egui::Image::new((texture.id(), egui::vec2(96.0, 96.0))));
+                        });
+                    ui.add_space(0.0);
+                    about_github_link(ui);
+                },
+            );
+
+            ui.add_space(16.0);
+
+            ui.allocate_ui_with_layout(
+                egui::vec2(page_width - 250.0, 190.0),
+                Layout::top_down(Align::Min),
+                |ui| {
+                    ui.label(RichText::new("DontreeCrab").size(18.0).strong());
+                    ui.label(RichText::new(APP_VERSION_LABEL).size(12.0).color(DIM));
+                    ui.add_space(14.0);
+                    ui.label(
+                        RichText::new(format!("{} :", tr("Software Composer")))
+                            .size(13.0)
+                            .strong(),
+                    );
+                    ui.label(RichText::new("PXCza").size(13.0));
+                    ui.add_space(10.0);
+                    ui.label(
+                        RichText::new(format!("{} :", tr("Tools Used")))
+                            .size(13.0)
+                            .strong(),
+                    );
+                    ui.label(RichText::new("DeepSeek V4.1 Flash 1017").size(13.0));
+                    ui.label(RichText::new("OpenCode 2.2.7").size(13.0));
+                },
+            );
         });
+
+        let license_rect = Rect::from_min_size(
+            Pos2::new(page_rect.right() - 120.0, button_top),
+            egui::vec2(120.0, 28.0),
+        );
+        if ui
+            .put(license_rect, egui::Button::new(tr("License")))
+            .clicked()
+        {
+            self.about_popup = Some(AboutPopup::License);
+        }
+        if ui
+            .put(
+                license_rect.translate(egui::vec2(0.0, 36.0)),
+                egui::Button::new(tr("Created")),
+            )
+            .clicked()
+        {
+            self.about_popup = Some(AboutPopup::Created);
+        }
 
         if let Some(popup) = self.about_popup {
             if draw_about_popup(ui.ctx(), popup) {
@@ -3324,7 +3344,7 @@ fn file_type_guess(path: &Path) -> String {
 
 /// A clickable GitHub link with a Lucide external-link icon.
 fn about_github_link(ui: &mut egui::Ui) {
-    let (rect, response) = ui.allocate_exact_size(egui::vec2(140.0, 24.0), egui::Sense::click());
+    let (rect, response) = ui.allocate_exact_size(egui::vec2(104.0, 24.0), egui::Sense::click());
     let response = response.on_hover_cursor(egui::CursorIcon::PointingHand);
     let color = if response.hovered() { FG } else { DIM };
     icons::paint(
@@ -3404,7 +3424,7 @@ fn draw_license(ui: &mut egui::Ui) {
 
 fn draw_created(ui: &mut egui::Ui) {
     egui::ScrollArea::vertical()
-        .max_height(360.0)
+        .max_height(420.0)
         .show(ui, |ui| {
             about_section(ui, &tr("Software Composer"), "PXCza");
             about_section(

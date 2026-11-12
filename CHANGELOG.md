@@ -1,6 +1,8 @@
 # Changelog
 
-## Unreleased
+## 0.1.1 Beta
+
+Patch release for the 0.1.0 Beta launcher problem.
 
 - Double-clicking `DontreeCrab.exe` now opens the player instead of printing
   help and exiting.

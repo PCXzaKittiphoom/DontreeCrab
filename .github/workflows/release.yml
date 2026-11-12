@@ -23,4 +23,5 @@ jobs:
         with:
           name: DontreeCrab ${{ github.ref_name }}
           prerelease: ${{ contains(github.ref_name, 'beta') || contains(github.ref_name, 'rc') }}
+          generate_release_notes: true
           files: dist/*.zip

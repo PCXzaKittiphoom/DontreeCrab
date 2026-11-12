@@ -45,8 +45,17 @@ enough — rewrite history before publishing, for example with
 
 ## Update steps
 
-1. Sync the source and redistributable assets from the development tree into
-   this repository. Keep the public `README.md` and `testdata/` here; do not
+1. If your development tree contains `scripts/sync-public.ps1`, run it from
+   there:
+
+   ```powershell
+   powershell -ExecutionPolicy Bypass -File scripts\sync-public.ps1
+   ```
+
+   It mirrors `src/`, `assets/fonts/`, `locales/`, `logo/`, `Cargo.toml`,
+   `Cargo.lock` and `build.rs`, re-applies the public sanitising rules, checks
+   for private references and runs the tests/clippy. Without the script, copy
+   those items by hand. Keep the public `README.md` and `testdata/` here; do not
    overwrite them with development copies that mention private files.
 2. If parsing or timing changed, regenerate the synthetic fixtures:
 

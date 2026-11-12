@@ -26,7 +26,7 @@ const ERROR: Color32 = Color32::from_rgb(230, 90, 90);
 /// MIDI channel 9 (1-based) is where Thai karaoke files put the melody.
 const MELODY_CHANNEL: u8 = 8;
 
-const GITHUB_URL: &str = "https://github.com/PXCza/DontreeCrab";
+const GITHUB_URL: &str = "https://github.com/PCXzaKittiphoom/DontreeCrab";
 const APP_VERSION_LABEL: &str = concat!(env!("CARGO_PKG_VERSION"), " Beta");
 const LICENSE_TEXT: &str = include_str!("../LICENSE");
 

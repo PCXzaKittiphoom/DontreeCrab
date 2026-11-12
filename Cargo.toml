@@ -4,6 +4,8 @@ version = "0.1.0"
 edition = "2024"
 description = "DontreeCrab - MIDI karaoke player for KAR, NCN and KMID files"
 license = "MIT"
+repository = "https://github.com/PCXzaKittiphoom/DontreeCrab"
+homepage = "https://github.com/PCXzaKittiphoom/DontreeCrab"
 
 [lib]
 name = "karaoke_player"

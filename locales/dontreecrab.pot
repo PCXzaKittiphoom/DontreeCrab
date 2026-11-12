@@ -1,0 +1,355 @@
+# DontreeCrab translation template.
+# Copy this file to <language-code>.po, fill in the msgstr lines, and place it
+# in a locales/ directory next to DontreeCrab.exe, in the working directory, or
+# in %APPDATA%\DontreeCrab\DontreeCrab\config\locales.
+# The header must keep the Language: and Language-Name: fields.
+#
+# Placeholders such as {} must be kept in the translated text; they may be
+# reordered but not removed.
+
+msgid ""
+msgstr ""
+"Project-Id-Version: DontreeCrab 0.1.0\n"
+"MIME-Version: 1.0\n"
+"Content-Type: text/plain; charset=UTF-8\n"
+"Content-Transfer-Encoding: 8bit\n"
+"Plural-Forms: nplurals=2; plural=(n != 1);\n"
+
+msgid "Prev"
+msgstr ""
+
+msgid "Previous playlist entry"
+msgstr ""
+
+msgid "Next"
+msgstr ""
+
+msgid "Next playlist entry"
+msgstr ""
+
+msgid "Repeat"
+msgstr ""
+
+msgid "Repeat playlist (Ctrl+R)"
+msgstr ""
+
+msgid "Clear"
+msgstr ""
+
+msgid "Playlist is empty\nright-click to add songs"
+msgstr ""
+
+msgid "SETTINGS"
+msgstr ""
+
+msgid "General"
+msgstr ""
+
+msgid "Text"
+msgstr ""
+
+msgid "SoundFont"
+msgstr ""
+
+msgid "Player"
+msgstr ""
+
+msgid "Background"
+msgstr ""
+
+msgid "Currently active SoundFont"
+msgstr ""
+
+msgid "No SoundFont"
+msgstr ""
+
+msgid "No SoundFont loaded"
+msgstr ""
+
+msgid "SoundFont buffer of {} ms is not supported; using the driver default"
+msgstr ""
+
+msgid "Browse for a SoundFont"
+msgstr ""
+
+msgid "Equalizer"
+msgstr ""
+
+msgid "MIDI Effects"
+msgstr ""
+
+msgid "SoundFont Buffer"
+msgstr ""
+
+msgid "Polyphony"
+msgstr ""
+
+msgid "voices"
+msgstr ""
+
+msgid "0 = auto, 10–100 ms manual"
+msgstr ""
+
+msgid "Close"
+msgstr ""
+
+msgid "Font size"
+msgstr ""
+
+msgid "Edge size"
+msgstr ""
+
+msgid "Distance"
+msgstr ""
+
+msgid "Font"
+msgstr ""
+
+msgid "No external font"
+msgstr ""
+
+msgid "Choose an external lyric font"
+msgstr ""
+
+msgid "Lyric"
+msgstr ""
+
+msgid "Edge"
+msgstr ""
+
+msgid "Cursor"
+msgstr ""
+
+msgid "Display Time"
+msgstr ""
+
+msgid "Indicator"
+msgstr ""
+
+msgid "Playlist"
+msgstr ""
+
+msgid "Language"
+msgstr ""
+
+msgid "System default"
+msgstr ""
+
+msgid "Setting"
+msgstr ""
+
+msgid "Song info"
+msgstr ""
+
+msgid "Bar & beat"
+msgstr ""
+
+msgid "Clock"
+msgstr ""
+
+msgid "Confirm exit"
+msgstr ""
+
+msgid "Delete played songs"
+msgstr ""
+
+msgid "Play immediately"
+msgstr ""
+
+msgid "Automatically play"
+msgstr ""
+
+msgid "Musical interval"
+msgstr ""
+
+msgid "Background Color"
+msgstr ""
+
+msgid "Preview monitor"
+msgstr ""
+
+msgid "NEXT >>>"
+msgstr ""
+
+msgid "BACK <<<"
+msgstr ""
+
+msgid "PAUSE"
+msgstr ""
+
+msgid "PLAY"
+msgstr ""
+
+msgid "STOP"
+msgstr ""
+
+msgid "OFF"
+msgstr ""
+
+msgid "ON"
+msgstr ""
+
+msgid "MELO [{}]"
+msgstr ""
+
+msgid "UI [{}%]"
+msgstr ""
+
+msgid "FONT [{}%]"
+msgstr ""
+
+msgid "VOL [{}]"
+msgstr ""
+
+msgid "Untitled"
+msgstr ""
+
+msgid "No song loaded"
+msgstr ""
+
+msgid "Play/Pause (F5)"
+msgstr ""
+
+msgid "Stop (F6)"
+msgstr ""
+
+msgid "MIDI Common"
+msgstr ""
+
+msgid "KAR  ·  {} BPM  ·  {} lines"
+msgstr ""
+
+msgid "NCN  ·  {} BPM  ·  {} lines"
+msgstr ""
+
+msgid "KMID  ·  {} BPM  ·  {} lines"
+msgstr ""
+
+msgid "Song Player  ›"
+msgstr ""
+
+msgid "Exit fullscreen"
+msgstr ""
+
+msgid "Fullscreen"
+msgstr ""
+
+msgid "Minimize"
+msgstr ""
+
+msgid "Show cursor"
+msgstr ""
+
+msgid "Hide cursor"
+msgstr ""
+
+msgid "Hide playlist"
+msgstr ""
+
+msgid "Show playlist"
+msgstr ""
+
+msgid "Setting…"
+msgstr ""
+
+msgid "Exit"
+msgstr ""
+
+msgid "Remove from playlist"
+msgstr ""
+
+msgid "Add files…"
+msgstr ""
+
+msgid "Add folder…"
+msgstr ""
+
+msgid "Import playlist…"
+msgstr ""
+
+msgid "Export playlist…"
+msgstr ""
+
+msgid "Exit DontreeCrab?"
+msgstr ""
+
+msgid "Are you sure you want to close the player?"
+msgstr ""
+
+msgid "Cancel"
+msgstr ""
+
+msgid "Code"
+msgstr ""
+
+msgid "Song"
+msgstr ""
+
+msgid "Artist"
+msgstr ""
+
+msgid "BPM"
+msgstr ""
+
+msgid "Key"
+msgstr ""
+
+msgid "Karaoke"
+msgstr ""
+
+msgid "Playlist JSON"
+msgstr ""
+
+msgid "All files"
+msgstr ""
+
+msgid "Open file…"
+msgstr ""
+
+msgid "Repeat: On"
+msgstr ""
+
+msgid "Repeat: Off"
+msgstr ""
+
+msgid "Clear playlist"
+msgstr ""
+
+msgid "Text visibility"
+msgstr ""
+
+msgid "Cursor visibility"
+msgstr ""
+
+msgid "Lyric depth"
+msgstr ""
+
+msgid "0% = brightest, 50% = dimmest"
+msgstr ""
+
+msgid "Center"
+msgstr ""
+
+msgid "Upper"
+msgstr ""
+
+msgid "Lower"
+msgstr ""
+
+msgid "Modern Upper"
+msgstr ""
+
+msgid "Legacy Cursor"
+msgstr ""
+
+msgid "Regular"
+msgstr ""
+
+msgid "Bold"
+msgstr ""
+
+msgid "Custom"
+msgstr ""
+
+msgid " KEY : {} "
+msgstr ""

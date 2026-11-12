@@ -1,0 +1,348 @@
+msgid ""
+msgstr ""
+"Project-Id-Version: DontreeCrab 0.1.0\n"
+"Language: th\n"
+"Language-Name: ไทย\n"
+"MIME-Version: 1.0\n"
+"Content-Type: text/plain; charset=UTF-8\n"
+"Content-Transfer-Encoding: 8bit\n"
+"Plural-Forms: nplurals=1; plural=0;\n"
+
+msgid "Prev"
+msgstr "ก่อนหน้า"
+
+msgid "Previous playlist entry"
+msgstr "รายการก่อนหน้าในเพลย์ลิสต์"
+
+msgid "Next"
+msgstr "ถัดไป"
+
+msgid "Next playlist entry"
+msgstr "รายการถัดไปในเพลย์ลิสต์"
+
+msgid "Repeat"
+msgstr "วนซ้ำ"
+
+msgid "Repeat playlist (Ctrl+R)"
+msgstr "เล่นเพลย์ลิสต์ซ้ำ (Ctrl+R)"
+
+msgid "Clear"
+msgstr "ล้าง"
+
+msgid "Playlist is empty\nright-click to add songs"
+msgstr "เพลย์ลิสต์ว่าง\nคลิกขวาเพื่อเพิ่มเพลง"
+
+msgid "SETTINGS"
+msgstr "ตั้งค่า"
+
+msgid "General"
+msgstr "ทั่วไป"
+
+msgid "Text"
+msgstr "ข้อความ"
+
+msgid "SoundFont"
+msgstr "ซาวด์ฟอนต์"
+
+msgid "Player"
+msgstr "ระบบการเล่น"
+
+msgid "Background"
+msgstr "พื้นหลัง"
+
+msgid "Currently active SoundFont"
+msgstr "ซาวด์ฟอนต์ที่ใช้อยู่"
+
+msgid "No SoundFont"
+msgstr "ไม่มีซาวด์ฟอนต์"
+
+msgid "No SoundFont loaded"
+msgstr "ยังไม่ได้โหลดซาวด์ฟอนต์"
+
+msgid "SoundFont buffer of {} ms is not supported; using the driver default"
+msgstr "ไม่รองรับบัฟเฟอร์ซาวด์ฟอนต์ {} ms จะใช้ค่าเริ่มต้นของไดรเวอร์"
+
+msgid "Browse for a SoundFont"
+msgstr "เลือกไฟล์ซาวด์ฟอนต์"
+
+msgid "Equalizer"
+msgstr "อีควอไลเซอร์"
+
+msgid "MIDI Effects"
+msgstr "เอฟเฟกต์ MIDI"
+
+msgid "SoundFont Buffer"
+msgstr "บัฟเฟอร์ SF2"
+
+msgid "Polyphony"
+msgstr "จำนวนเสียง"
+
+msgid "voices"
+msgstr "เสียง"
+
+msgid "0 = auto, 10–100 ms manual"
+msgstr "0 = อัตโนมัติ, กำหนดเอง 10–100 ms"
+
+msgid "Close"
+msgstr "ปิด"
+
+msgid "Font size"
+msgstr "ขนาดตัวอักษร"
+
+msgid "Edge size"
+msgstr "ขนาดขอบ"
+
+msgid "Distance"
+msgstr "ระยะห่าง"
+
+msgid "Font"
+msgstr "ฟอนต์"
+
+msgid "No external font"
+msgstr "ไม่มีฟอนต์ภายนอก"
+
+msgid "Choose an external lyric font"
+msgstr "เลือกฟอนต์เนื้อเพลงภายนอก"
+
+msgid "Lyric"
+msgstr "เนื้อเพลง"
+
+msgid "Edge"
+msgstr "ขอบ"
+
+msgid "Cursor"
+msgstr "เคอร์เซอร์"
+
+msgid "Display Time"
+msgstr "เวลาแสดงผล"
+
+msgid "Indicator"
+msgstr "ตัวแสดงผล"
+
+msgid "Playlist"
+msgstr "เพลย์ลิสต์"
+
+msgid "Language"
+msgstr "ภาษา"
+
+msgid "System default"
+msgstr "ค่าเริ่มต้นของระบบ"
+
+msgid "Setting"
+msgstr "การตั้งค่า"
+
+msgid "Song info"
+msgstr "ข้อมูลเพลง"
+
+msgid "Bar & beat"
+msgstr "ห้องและจังหวะ"
+
+msgid "Clock"
+msgstr "นาฬิกา"
+
+msgid "Confirm exit"
+msgstr "ยืนยันก่อนออก"
+
+msgid "Delete played songs"
+msgstr "ลบเพลงที่เล่นแล้ว"
+
+msgid "Play immediately"
+msgstr "เล่นทันที"
+
+msgid "Automatically play"
+msgstr "เล่นอัตโนมัติ"
+
+msgid "Musical interval"
+msgstr "พักระหว่างเพลง"
+
+msgid "Background Color"
+msgstr "สีพื้นหลัง"
+
+msgid "Preview monitor"
+msgstr "ตัวอย่างหน้าจอ"
+
+msgid "NEXT >>>"
+msgstr "ถัดไป >>>"
+
+msgid "BACK <<<"
+msgstr "ย้อนกลับ <<<"
+
+msgid "PAUSE"
+msgstr "หยุดชั่วคราว"
+
+msgid "PLAY"
+msgstr "เล่น"
+
+msgid "STOP"
+msgstr "หยุด"
+
+msgid "OFF"
+msgstr "ปิด"
+
+msgid "ON"
+msgstr "เปิด"
+
+msgid "MELO [{}]"
+msgstr "MELO [{}]"
+
+msgid "UI [{}%]"
+msgstr "UI [{}%]"
+
+msgid "FONT [{}%]"
+msgstr "FONT [{}%]"
+
+msgid "VOL [{}]"
+msgstr "VOL [{}]"
+
+msgid "Untitled"
+msgstr "ไม่มีชื่อ"
+
+msgid "No song loaded"
+msgstr "ยังไม่ได้โหลดเพลง"
+
+msgid "Play/Pause (F5)"
+msgstr "เล่น/หยุดชั่วคราว (F5)"
+
+msgid "Stop (F6)"
+msgstr "หยุด (F6)"
+
+msgid "MIDI Common"
+msgstr "MIDI ทั่วไป"
+
+msgid "KAR  ·  {} BPM  ·  {} lines"
+msgstr "KAR  ·  {} BPM  ·  {} บรรทัด"
+
+msgid "NCN  ·  {} BPM  ·  {} lines"
+msgstr "NCN  ·  {} BPM  ·  {} บรรทัด"
+
+msgid "KMID  ·  {} BPM  ·  {} lines"
+msgstr "KMID  ·  {} BPM  ·  {} บรรทัด"
+
+msgid "Song Player  ›"
+msgstr "การเล่นเพลง  ›"
+
+msgid "Exit fullscreen"
+msgstr "ออกจากเต็มจอ"
+
+msgid "Fullscreen"
+msgstr "เต็มจอ"
+
+msgid "Minimize"
+msgstr "ย่อหน้าต่าง"
+
+msgid "Show cursor"
+msgstr "แสดงเคอร์เซอร์"
+
+msgid "Hide cursor"
+msgstr "ซ่อนเคอร์เซอร์"
+
+msgid "Hide playlist"
+msgstr "ซ่อนเพลย์ลิสต์"
+
+msgid "Show playlist"
+msgstr "แสดงเพลย์ลิสต์"
+
+msgid "Setting…"
+msgstr "ตั้งค่า…"
+
+msgid "Exit"
+msgstr "ออก"
+
+msgid "Remove from playlist"
+msgstr "นำออกจากเพลย์ลิสต์"
+
+msgid "Add files…"
+msgstr "เพิ่มไฟล์…"
+
+msgid "Add folder…"
+msgstr "เพิ่มโฟลเดอร์…"
+
+msgid "Import playlist…"
+msgstr "นำเข้าเพลย์ลิสต์…"
+
+msgid "Export playlist…"
+msgstr "ส่งออกเพลย์ลิสต์…"
+
+msgid "Exit DontreeCrab?"
+msgstr "ออกจาก DontreeCrab?"
+
+msgid "Are you sure you want to close the player?"
+msgstr "คุณแน่ใจหรือไม่ว่าต้องการปิดโปรแกรม?"
+
+msgid "Cancel"
+msgstr "ยกเลิก"
+
+msgid "Code"
+msgstr "รหัส"
+
+msgid "Song"
+msgstr "เพลง"
+
+msgid "Artist"
+msgstr "ศิลปิน"
+
+msgid "BPM"
+msgstr "BPM"
+
+msgid "Key"
+msgstr "คีย์"
+
+msgid "Karaoke"
+msgstr "คาราโอเกะ"
+
+msgid "Playlist JSON"
+msgstr "เพลย์ลิสต์ JSON"
+
+msgid "All files"
+msgstr "ไฟล์ทั้งหมด"
+
+msgid "Open file…"
+msgstr "เปิดไฟล์…"
+
+msgid "Repeat: On"
+msgstr "วนซ้ำ: เปิด"
+
+msgid "Repeat: Off"
+msgstr "วนซ้ำ: ปิด"
+
+msgid "Clear playlist"
+msgstr "ล้างเพลย์ลิสต์"
+
+msgid "Text visibility"
+msgstr "ตำแหน่งข้อความ"
+
+msgid "Cursor visibility"
+msgstr "รูปแบบเคอร์เซอร์"
+
+msgid "Lyric depth"
+msgstr "ความจางบรรทัด"
+
+msgid "0% = brightest, 50% = dimmest"
+msgstr "0% = สว่างที่สุด, 50% = จางที่สุด"
+
+msgid "Center"
+msgstr "กลาง"
+
+msgid "Upper"
+msgstr "บน"
+
+msgid "Lower"
+msgstr "ล่าง"
+
+msgid "Modern Upper"
+msgstr "สมัยใหม่ (บน)"
+
+msgid "Legacy Cursor"
+msgstr "แบบเดิม"
+
+msgid "Regular"
+msgstr "ปกติ"
+
+msgid "Bold"
+msgstr "ตัวหนา"
+
+msgid "Custom"
+msgstr "กำหนดเอง"
+
+msgid " KEY : {} "
+msgstr " คีย์ : {} "

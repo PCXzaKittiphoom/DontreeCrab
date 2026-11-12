@@ -1,0 +1,17 @@
+# Build output
+/target
+/dist
+
+# User-supplied audio assets (never commit these)
+/soundfonts
+*.sf2
+*.wav
+
+# Test screenshots and local captures
+gui_shot*.png
+Cap/
+
+# OS/editor noise
+.DS_Store
+Thumbs.db
+__pycache__/

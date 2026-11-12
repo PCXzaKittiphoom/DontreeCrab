@@ -10,9 +10,10 @@ own licenses.
 | Sarabun Regular/Bold (`assets/fonts/Sarabun-*.ttf`) | SIL Open Font License 1.1 | `assets/fonts/Sarabun-License.txt` |
 | E1234 Regular (`assets/fonts/E1234-Regular.ttf`) | SIL Open Font License 1.1 | `assets/fonts/E1234-License.txt` |
 | Lucide icon font (`assets/fonts/lucide.ttf`) | ISC | `assets/fonts/lucide-LICENSE.txt` |
+| egui default fonts (Hack, NotoEmoji, Ubuntu Light, emoji-icon, egui-icons) | MIT / OFL-1.1 / Ubuntu Font Licence 1.0 | `assets/fonts/egui/` |
 
 The fonts are embedded in the executable. Modified versions must not use the
-reserved font names; see the OFL text for details.
+reserved font names; see the OFL and Ubuntu font licence texts for details.
 
 ## Rust dependencies
 
@@ -37,6 +38,34 @@ the exact version and license of a release.
 | serde / serde_json | MIT OR Apache-2.0 |
 | winreg | MIT |
 | windows-sys | MIT OR Apache-2.0 |
+
+### Transitive dependencies
+
+The complete dependency tree contains about 300 crates. All are OSI-approved
+open-source licenses; no paid license or proprietary SDK is required. Most are
+MIT, Apache-2.0, BSD, ISC, Zlib or Unicode-3.0.
+
+Notable licenses in the transitive tree:
+
+| Crate | License | Note |
+|---|---|---|
+| option-ext | MPL-2.0 | Weak, file-level copyleft; used unmodified via `directories` |
+| self_cell | Apache-2.0 OR GPL-2.0-only | The Apache-2.0 option is used |
+| r-efi | MIT OR Apache-2.0 OR LGPL-2.1-or-later | A permissive option is used |
+| libloading | ISC | Permissive |
+| clipboard-win, error-code | BSL-1.0 | Permissive |
+| tiny-skia, tiny-skia-path | BSD-3-Clause | Permissive |
+| unicode-* data crates | Unicode-3.0 | Permissive data licence |
+
+To generate a full report for a release:
+
+```sh
+cargo install cargo-about
+cargo about generate about.hbs > THIRD_PARTY_LICENSES.html
+```
+
+or inspect each crate's metadata with `cargo metadata`. The short table above is
+not a substitute for the license texts shipped by the crates.
 
 No SoundFont (`.sf2`) and no karaoke song or lyric is distributed with this
 repository. MIDI files under `testdata/` were generated from scratch for the

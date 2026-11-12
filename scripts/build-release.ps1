@@ -40,6 +40,7 @@ Write-Host "bundled translation catalogs"
 $fontLicenseDir = Join-Path $dist "assets\fonts"
 New-Item -ItemType Directory -Force $fontLicenseDir | Out-Null
 Copy-Item "assets\fonts\*.txt" $fontLicenseDir
+Copy-Item -Recurse -Force "assets\fonts\egui" $fontLicenseDir
 Write-Host "bundled font licenses"
 
 # The public package never contains a SoundFont.

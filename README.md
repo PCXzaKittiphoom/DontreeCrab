@@ -29,6 +29,8 @@ does not need a network connection.
 - Runtime translations from GNU gettext `.po` files (English and Thai included).
 - Window/file associations on Windows.
 - Large, multi-layer SoundFont support with configurable polyphony.
+- Startup splash that shows the loading progress while the SoundFont loads.
+- Fullscreen state that is remembered between launches.
 - About page with version, credits, GitHub link, MIT licence and a build/credits
   popup.
 

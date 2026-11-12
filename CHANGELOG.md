@@ -14,3 +14,5 @@ Initial public release.
 - Configurable SoundFont polyphony and buffer.
 - In-memory repair of altered SMF headers for interoperability.
 - Windows file associations and release packaging.
+- Startup splash with version and SoundFont loading status.
+- Fullscreen state is remembered between launches.

@@ -90,6 +90,8 @@ pub struct Settings {
     pub hide_cursor: bool,
     /// Ask for confirmation before closing the player.
     pub confirm_exit: bool,
+    /// Open the main window in fullscreen mode.
+    pub fullscreen: bool,
     /// `#RRGGBB` colours for the unsung lyrics and the karaoke cursor.
     pub lyric_text_color: String,
     pub lyric_edge_color: String,
@@ -144,6 +146,7 @@ impl Default for Settings {
             music_interval_seconds: 0,
             hide_cursor: false,
             confirm_exit: true,
+            fullscreen: false,
             lyric_text_color: "#FFFFFF".to_owned(),
             lyric_edge_color: "#000000".to_owned(),
             cursor_text_color: "#0000FF".to_owned(),
@@ -314,12 +317,14 @@ mod tests {
         settings.volume = 0.42;
         settings.transpose = -3;
         settings.melo_muted = true;
+        settings.fullscreen = true;
 
         let text = serde_json::to_string(&settings).unwrap();
         let back: Settings = serde_json::from_str(&text).unwrap();
         assert!((back.volume - 0.42).abs() < 1e-6);
         assert_eq!(back.transpose, -3);
         assert!(back.melo_muted);
+        assert!(back.fullscreen);
     }
 
     #[test]
@@ -328,6 +333,7 @@ mod tests {
         assert!((back.volume - 0.3).abs() < 1e-6);
         assert_eq!(back.transpose, 0);
         assert!(back.repeat);
+        assert!(!back.fullscreen);
     }
 
     #[test]

@@ -137,6 +137,8 @@ pub struct KaraokeApp {
     splash_centered: bool,
     /// Frames left before the expanded main window is centred.
     center_main_pending: u8,
+    /// Frames left before the saved fullscreen state is applied.
+    fullscreen_pending: u8,
     pending_open: Option<PathBuf>,
     pending_playlist: Vec<PathBuf>,
     volume: f32,
@@ -236,6 +238,7 @@ impl Default for KaraokeApp {
             startup_texture: None,
             splash_centered: false,
             center_main_pending: 0,
+            fullscreen_pending: 0,
             pending_open: None,
             pending_playlist: Vec::new(),
             volume: 0.7,
@@ -3064,6 +3067,8 @@ impl KaraokeApp {
             }
             MenuAction::ToggleFullscreen => {
                 let fullscreen = ctx.input(|i| i.viewport().fullscreen.unwrap_or(false));
+                self.settings.fullscreen = !fullscreen;
+                self.save_settings();
                 ctx.send_viewport_cmd(egui::ViewportCommand::Fullscreen(!fullscreen));
             }
             MenuAction::Minimize => {
@@ -3404,6 +3409,12 @@ impl eframe::App for KaraokeApp {
             ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(egui::vec2(1024.0, 640.0)));
             ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
             self.center_main_pending = 5;
+            if self.settings.fullscreen {
+                // Apply fullscreen only after the normal-size window exists, so
+                // leaving fullscreen later restores 1024x640 instead of the
+                // splash size.
+                self.fullscreen_pending = 60;
+            }
             // Let the window manager apply the new size before painting the
             // main interface, so it never flashes inside the small splash.
             ctx.request_repaint();
@@ -3422,6 +3433,21 @@ impl eframe::App for KaraokeApp {
                     ctx.send_viewport_cmd(cmd);
                 }
                 self.center_main_pending = 0;
+            } else {
+                ctx.request_repaint();
+            }
+        }
+        if self.fullscreen_pending > 0 {
+            self.fullscreen_pending -= 1;
+            let wide = ctx.input(|i| {
+                i.viewport()
+                    .inner_rect
+                    .map(|rect| rect.width() >= 900.0)
+                    .unwrap_or(false)
+            });
+            if wide || self.fullscreen_pending == 0 {
+                ctx.send_viewport_cmd(egui::ViewportCommand::Fullscreen(true));
+                self.fullscreen_pending = 0;
             } else {
                 ctx.request_repaint();
             }

@@ -81,6 +81,10 @@ cargo run -- play testdata/sample.kar
 cargo run --release -- render testdata/sample.kar -o preview.wav --duration 12
 ```
 
+The Windows release executable is GUI-first: double-click `DontreeCrab.exe`
+(or run `DontreeCrab.exe gui <song>`) to open the player. Command-line
+subcommands keep their console output when started from a terminal.
+
 `testdata/sample.kar` and `testdata/ncn/Song/1/test.mid` are synthetic fixtures
 created for the test suite. They are not real songs.
 

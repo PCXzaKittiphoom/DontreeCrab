@@ -22,8 +22,9 @@ mod icons;
     about = "DontreeCrab - play and inspect MIDI karaoke songs: .kar, NCN (.mid/.lyr/.cur) and KMID"
 )]
 struct Cli {
+    /// Optional so that double-clicking DontreeCrab.exe opens the GUI.
     #[command(subcommand)]
-    command: CliCommand,
+    command: Option<CliCommand>,
 }
 
 #[derive(Subcommand)]
@@ -190,15 +191,19 @@ struct RenderArgs {
 }
 
 fn main() -> Result<()> {
+    hide_own_console();
     let cli = Cli::parse();
     match cli.command {
-        CliCommand::Info(args) => cmd_info(args),
-        CliCommand::Dump(args) => cmd_dump(args),
-        CliCommand::Lyrics(args) => cmd_lyrics(args),
-        CliCommand::Play(args) => cmd_play(args),
-        CliCommand::Render(args) => cmd_render(args),
-        CliCommand::Gui { files } => gui::run(files).map_err(|e| anyhow::anyhow!("gui: {e}")),
-        CliCommand::Associate { mid } => {
+        // No subcommand means the user launched the executable directly, so
+        // open the player instead of printing the clap help and exiting.
+        None => gui::run(Vec::new()).map_err(|e| anyhow::anyhow!("gui: {e}")),
+        Some(CliCommand::Info(args)) => cmd_info(args),
+        Some(CliCommand::Dump(args)) => cmd_dump(args),
+        Some(CliCommand::Lyrics(args)) => cmd_lyrics(args),
+        Some(CliCommand::Play(args)) => cmd_play(args),
+        Some(CliCommand::Render(args)) => cmd_render(args),
+        Some(CliCommand::Gui { files }) => gui::run(files).map_err(|e| anyhow::anyhow!("gui: {e}")),
+        Some(CliCommand::Associate { mid }) => {
             let exe = std::env::current_exe()?;
             assoc::associate(&exe, mid)?;
             println!(
@@ -208,13 +213,34 @@ fn main() -> Result<()> {
             );
             Ok(())
         }
-        CliCommand::Unassociate => {
+        Some(CliCommand::Unassociate) => {
             assoc::unassociate()?;
             println!("file associations removed");
             Ok(())
         }
     }
 }
+
+/// Hide the console window that Windows creates when the GUI executable is
+/// started by double-clicking. If the process shares a console with a shell
+/// (`cargo run`, cmd or PowerShell), leave it alone so CLI output stays visible.
+#[cfg(windows)]
+fn hide_own_console() {
+    use windows_sys::Win32::System::Console::{GetConsoleProcessList, GetConsoleWindow};
+    use windows_sys::Win32::UI::WindowsAndMessaging::{SW_HIDE, ShowWindow};
+
+    let mut processes = [0u32; 2];
+    let count = unsafe { GetConsoleProcessList(processes.as_mut_ptr(), processes.len() as u32) };
+    if count == 1 {
+        let window = unsafe { GetConsoleWindow() };
+        if !window.is_null() {
+            unsafe { ShowWindow(window, SW_HIDE) };
+        }
+    }
+}
+
+#[cfg(not(windows))]
+fn hide_own_console() {}
 
 fn cmd_info(args: Common) -> Result<()> {
     let song = args.song()?;

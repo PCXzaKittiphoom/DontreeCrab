@@ -28,7 +28,7 @@ roxmltree = "0.21"
 rustysynth = "1.3.8"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-windows-sys = { version = "0.61.2", features = ["Win32_UI_Shell", "Win32_Foundation", "Win32_System_SystemInformation"] }
+windows-sys = { version = "0.61.2", features = ["Win32_UI_Shell", "Win32_Foundation", "Win32_System_SystemInformation", "Win32_System_Console", "Win32_UI_WindowsAndMessaging"] }
 winreg = "0.56.0"
 
 [profile.release]

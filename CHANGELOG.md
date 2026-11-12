@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+- Double-clicking `DontreeCrab.exe` now opens the player instead of printing
+  help and exiting.
+- The console window is hidden when the GUI is launched directly on Windows.
+
 ## 0.1.0 Beta
 
 Initial public beta release.

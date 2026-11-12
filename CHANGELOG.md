@@ -17,3 +17,4 @@ Initial public release.
 - Startup splash with version and SoundFont loading status.
 - Fullscreen state is remembered between launches.
 - Usage notice below the MIT license in About → License.
+- Fade-out animation when closing the About license and credits popups.

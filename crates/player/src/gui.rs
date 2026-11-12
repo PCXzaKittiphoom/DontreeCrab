@@ -214,6 +214,9 @@ pub struct KaraokeApp {
     /// Fade-out state for the exit confirmation.
     exit_confirm_fade: f32,
     exit_confirm_closing: bool,
+    /// Fade-out state for the About license/credits popup.
+    about_popup_fade: f32,
+    about_popup_closing: bool,
     /// The currently open custom context menu.
     menu: Option<OpenMenu>,
     /// The native file dialog currently running on a worker thread.
@@ -286,6 +289,8 @@ impl Default for KaraokeApp {
             settings_fade: 1.0,
             exit_confirm_fade: 1.0,
             exit_confirm_closing: false,
+            about_popup_fade: 1.0,
+            about_popup_closing: false,
             menu: None,
             pending_dialog: None,
         }
@@ -1317,6 +1322,8 @@ impl KaraokeApp {
         self.settings_just_opened = true;
         self.settings_section = 0;
         self.about_popup = None;
+        self.about_popup_closing = false;
+        self.about_popup_fade = 1.0;
         self.settings_closing = false;
         self.settings_fade = 1.0;
     }
@@ -1817,6 +1824,8 @@ impl KaraokeApp {
         if close {
             self.settings_closing = true;
             self.about_popup = None;
+            self.about_popup_closing = false;
+            self.about_popup_fade = 1.0;
             self.settings_save_at = None;
             self.save_settings();
         }
@@ -2227,6 +2236,8 @@ impl KaraokeApp {
             .clicked()
         {
             self.about_popup = Some(AboutPopup::License);
+            self.about_popup_fade = 1.0;
+            self.about_popup_closing = false;
         }
         if ui
             .put(
@@ -2236,11 +2247,25 @@ impl KaraokeApp {
             .clicked()
         {
             self.about_popup = Some(AboutPopup::Created);
+            self.about_popup_fade = 1.0;
+            self.about_popup_closing = false;
         }
 
-        if let Some(popup) = self.about_popup {
-            if draw_about_popup(ui.ctx(), popup) {
+        if self.about_popup_closing {
+            let dt = ui.ctx().input(|i| i.stable_dt).min(0.1);
+            self.about_popup_fade = (self.about_popup_fade - dt / 0.15).max(0.0);
+            if self.about_popup_fade <= 0.001 {
                 self.about_popup = None;
+                self.about_popup_closing = false;
+                self.about_popup_fade = 1.0;
+            } else {
+                ui.ctx().request_repaint();
+            }
+        }
+        if let Some(popup) = self.about_popup {
+            if draw_about_popup(ui.ctx(), popup, self.about_popup_fade) {
+                self.about_popup_closing = true;
+                ui.ctx().request_repaint();
             }
         }
     }
@@ -3656,7 +3681,8 @@ fn about_github_link(ui: &mut egui::Ui) {
 }
 
 /// Draw the Licence or Created popup. Returns true when it should close.
-fn draw_about_popup(ctx: &egui::Context, popup: AboutPopup) -> bool {
+fn draw_about_popup(ctx: &egui::Context, popup: AboutPopup, fade: f32) -> bool {
+    let fade = fade.clamp(0.0, 1.0);
     let mut close = false;
     let title = match popup {
         AboutPopup::License => tr("License"),
@@ -3664,15 +3690,24 @@ fn draw_about_popup(ctx: &egui::Context, popup: AboutPopup) -> bool {
     };
 
     let modal = egui::Modal::new(egui::Id::unique("about_popup"))
-        .backdrop_color(Color32::from_black_alpha(150))
+        .backdrop_color(Color32::from_black_alpha((150.0 * fade) as u8))
         .frame(
             egui::Frame::NONE
-                .fill(Color32::from_rgb(8, 8, 8))
-                .stroke(egui::Stroke::new(1.5, Color32::from_gray(120)))
+                .fill(Color32::from_rgba_unmultiplied(
+                    8,
+                    8,
+                    8,
+                    (255.0 * fade) as u8,
+                ))
+                .stroke(egui::Stroke::new(
+                    1.5,
+                    Color32::from_rgba_unmultiplied(120, 120, 120, (255.0 * fade) as u8),
+                ))
                 .corner_radius(egui::CornerRadius::same(12))
                 .inner_margin(egui::Margin::symmetric(22, 18)),
         )
         .show(ctx, |ui| {
+            ui.set_opacity(fade);
             let width = match popup {
                 AboutPopup::License => 660.0,
                 AboutPopup::Created => 620.0,

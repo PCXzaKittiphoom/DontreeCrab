@@ -479,3 +479,258 @@ msgstr ""
 
 msgid "DontreeCrab is only a MIDI player, intended for MIDI content that you create yourself or are otherwise entitled to use.\n\nWe do not support or accept any use of this codebase for reading, converting, playing, copying, or supporting commercial karaoke formats that are copy-protected or restricted by law, such as EMK & XMK (eXtreme Karaoke), SIB & SIBKL (SIB/SIBK Karaoke) and SMK & SMKL & SMD (Sonic Karaoke), or any program that decrypts or bypasses file protection to play, convert, copy or distribute song libraries without permission from the copyright owners.\n\nIssues and pull requests requesting such support will be rejected immediately. Anyone who uses or modifies this software for those purposes is solely responsible for their own actions; the developers and contributors accept no liability.\n\nThis software is provided \"as is\", without warranty, as stated in the MIT License. This notice is not legal advice; please check the laws in your country."
 msgstr ""
+
+msgid "Song Data"
+msgstr ""
+
+msgid "Databases used"
+msgstr ""
+
+msgid "SQLite"
+msgstr ""
+
+msgid "dBase (Legacy)"
+msgstr ""
+
+msgid "Database file"
+msgstr ""
+
+msgid "Not selected"
+msgstr ""
+
+msgid "Database file not found"
+msgstr ""
+
+msgid "File type"
+msgstr ""
+
+msgid "Folder path"
+msgstr ""
+
+msgid "NCN MIDI"
+msgstr ""
+
+msgid "KMID MIDI"
+msgstr ""
+
+msgid "KAR MIDI"
+msgstr ""
+
+msgid "Restore"
+msgstr ""
+
+msgid "Restore folder paths?"
+msgstr ""
+
+msgid "This resets folder paths to the default folders inside the program folder. Songs and the database are not deleted."
+msgstr ""
+
+msgid "Choose folder"
+msgstr ""
+
+msgid "No folder selected"
+msgstr ""
+
+msgid "Songs are indexed from these folders when you press Scan."
+msgstr ""
+
+msgid "Search"
+msgstr ""
+
+msgid "Add a song"
+msgstr ""
+
+msgid "Create a database"
+msgstr ""
+
+msgid "Type"
+msgstr ""
+
+msgid "No songs yet. Press Create a database."
+msgstr ""
+
+msgid "Choose at least one folder first"
+msgstr ""
+
+msgid "The database scan stopped unexpectedly"
+msgstr ""
+
+msgid "Scanned {} songs ({} duplicates, {} skipped)"
+msgstr ""
+
+msgid "File not found"
+msgstr ""
+
+msgid "{} songs · {} duplicates · {} skipped"
+msgstr ""
+
+msgid "All"
+msgstr ""
+
+msgid "Search songs"
+msgstr ""
+
+msgid "Code, song or artist"
+msgstr ""
+
+msgid "OK"
+msgstr ""
+
+msgid "No songs match your search."
+msgstr ""
+
+msgid "Open"
+msgstr ""
+
+msgid "Add"
+msgstr ""
+
+msgid "Select all"
+msgstr ""
+
+msgid "Found {} songs"
+msgstr ""
+
+msgid "Added {} songs ({} skipped)"
+msgstr ""
+
+msgid "Select at least one song"
+msgstr ""
+
+msgid "The folder scan stopped unexpectedly"
+msgstr ""
+
+msgid "The import stopped unexpectedly"
+msgstr ""
+
+msgid "Open a folder to add songs."
+msgstr ""
+
+msgid "No songs match the filter."
+msgstr ""
+
+msgid "Search lyrics"
+msgstr ""
+
+msgid "No matching lyric"
+msgstr ""
+
+msgid "No lyrics in this song"
+msgstr ""
+
+msgid "Type lyrics to find a song"
+msgstr ""
+
+msgid "No songs match those lyrics"
+msgstr ""
+
+msgid "Syncing lyrics"
+msgstr ""
+
+msgid "Enter to play"
+msgstr ""
+
+msgid "Type to find a song"
+msgstr ""
+
+msgid "Added to playlist"
+msgstr ""
+
+msgid "Check missing"
+msgstr ""
+
+msgid "Check missing files"
+msgstr ""
+
+msgid "{} songs · {} unchanged · {} duplicates · {} skipped"
+msgstr ""
+
+msgid "{} missing · {} restored"
+msgstr ""
+
+msgid "Compact"
+msgstr ""
+
+msgid "Rebuild the database file and reclaim space"
+msgstr ""
+
+msgid "Database {} → {}"
+msgstr ""
+
+msgid "Database check failed"
+msgstr ""
+
+msgid "Backup"
+msgstr ""
+
+msgid "Save a copy of the database to the backups folder"
+msgstr ""
+
+msgid "Backup saved ({})"
+msgstr ""
+
+msgid "Loading the library..."
+msgstr ""
+
+msgid "Search Popup"
+msgstr ""
+
+msgid "Opacity"
+msgstr ""
+
+msgid "Size"
+msgstr ""
+
+msgid "Position"
+msgstr ""
+
+msgid "Auto"
+msgstr ""
+
+msgid "Top"
+msgstr ""
+
+msgid "Bottom"
+msgstr ""
+
+msgid "No songs match that search"
+msgstr ""
+
+msgid "MIDI"
+msgstr ""
+
+msgid "MIDI Out"
+msgstr ""
+
+msgid "Lock bass voice"
+msgstr ""
+
+msgid "Lock drum kit"
+msgstr ""
+
+msgid "Lock kick"
+msgstr ""
+
+msgid "Lock snare"
+msgstr ""
+
+msgid "Reset MIDI"
+msgstr ""
+
+msgid "Split voice"
+msgstr ""
+
+msgid "Split voice is not available yet"
+msgstr ""
+
+msgid "Metronome"
+msgstr ""
+
+msgid "Enable"
+msgstr ""
+
+msgid "First beat"
+msgstr ""
+
+msgid "Other beats"
+msgstr ""

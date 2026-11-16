@@ -74,6 +74,9 @@ pub fn from_doc(doc: MidiDoc, enc: EncodingChoice) -> Song {
         track_count,
         events: doc.events,
         lyric_lines,
+        vocal_channel: None,
+        year: None,
+        creator: None,
     }
 }
 

@@ -155,6 +155,9 @@ pub fn build(
         track_count,
         events: doc.events,
         lyric_lines,
+        vocal_channel: None,
+        year: None,
+        creator: None,
     })
 }
 

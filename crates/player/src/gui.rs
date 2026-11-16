@@ -1,17 +1,23 @@
+use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc::{Receiver, Sender, TryRecvError};
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 use eframe::egui;
 use egui::{Align, Color32, FontFamily, FontId, Layout, Pos2, Rect, RichText};
-use karaoke_player::audio::{self, AudioHandle, Command, Player};
+use karaoke_player::audio::{self, AudioHandle, Command, MidiOptions, Player};
 use karaoke_player::i18n::{self, tr, tr_args};
+use karaoke_player::library::{self, Library, LyricHit, ScanOutcome, SongRecord};
 use karaoke_player::meter::MeterMap;
 use karaoke_player::model::{LyricLine, Song};
+use karaoke_player::ncn;
 use karaoke_player::playlist::{PlaylistEntry, PlaylistFile};
-use karaoke_player::settings::{CursorVisibility, FontStyle, Settings, TextVisibility};
+use karaoke_player::settings::{
+    BackgroundStyle, CursorVisibility, FontStyle, MidiReset, Settings, TextVisibility,
+    TransposeMode,
+};
 use karaoke_player::soundfont;
 use karaoke_player::{LoadOptions, load};
 use rustysynth::SoundFont;
@@ -26,6 +32,9 @@ const ERROR: Color32 = Color32::from_rgb(230, 90, 90);
 /// MIDI channel 9 (1-based) is where Thai karaoke files put the melody.
 const MELODY_CHANNEL: u8 = 8;
 
+/// Fixed scale of the song search popup (120% of the fitted size).
+const SEARCH_POPUP_SCALE: f32 = 1.2;
+
 const GITHUB_URL: &str = "https://github.com/PCXzaKittiphoom/DontreeCrab";
 const APP_VERSION_LABEL: &str = concat!(env!("CARGO_PKG_VERSION"), " Beta");
 const LICENSE_TEXT: &str = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/../../LICENSE"));
@@ -38,7 +47,14 @@ enum AboutPopup {
 }
 
 /// Actions offered by the right-click menus.
-#[derive(Clone, Copy)]
+/// Background artwork shipped with the player; the default until the user
+/// picks a colour or their own picture.
+const DEFAULT_BACKGROUND: &[u8] = include_bytes!(concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/../../assets/backgrounds/DontreeCrab_Background.png"
+));
+
+#[derive(Clone)]
 enum MenuAction {
     Open,
     AddFiles,
@@ -46,11 +62,19 @@ enum MenuAction {
     ImportPlaylist,
     ExportPlaylist,
     TogglePlaylist,
+    /// Open the song database window.
+    SongData,
+    /// Switch the MIDI output (empty = the built-in SoundFont).
+    SetMidiOut(String),
+    /// Open the per-channel output window.
+    SplitVoice,
     ToggleFullscreen,
     Minimize,
     ToggleCursor,
     ToggleRepeat,
     ClearPlaylist,
+    PlaylistPrev,
+    PlaylistNext,
     Settings,
     About,
     Exit,
@@ -80,12 +104,17 @@ struct OpenMenu {
 #[derive(Clone, Copy)]
 enum DialogKind {
     Open,
+    BackgroundImage,
     AddFiles,
     AddFolder,
     ImportPlaylist,
     ExportPlaylist,
     SoundFont,
     LyricFont,
+    NcnFolder,
+    KmidFolder,
+    KarFolder,
+    ImportFolder,
 }
 
 /// A native dialog that runs on its own thread so the player keeps drawing
@@ -93,6 +122,102 @@ enum DialogKind {
 struct PendingDialog {
     kind: DialogKind,
     receiver: Receiver<Option<Vec<PathBuf>>>,
+}
+
+enum LibraryScanMessage {
+    Progress(usize, usize),
+    Done(ScanOutcome),
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum LibraryFilter {
+    All,
+    Ncn,
+    Kmid,
+    Kar,
+}
+
+impl LibraryFilter {
+    fn label(self) -> String {
+        match self {
+            Self::All => tr("All"),
+            Self::Ncn => tr("NCN"),
+            Self::Kmid => tr("KMID"),
+            Self::Kar => tr("KAR"),
+        }
+    }
+
+    fn format(self) -> Option<&'static str> {
+        match self {
+            Self::All => None,
+            Self::Ncn => Some("ncn"),
+            Self::Kmid => Some("kmid"),
+            Self::Kar => Some("kar"),
+        }
+    }
+}
+
+/// A database maintenance action started from the Song Data window.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum LibraryOp {
+    CheckMissing,
+    Compact,
+}
+
+impl LibraryOp {
+    fn busy_label(self) -> String {
+        match self {
+            Self::CheckMissing => tr("Checking files…"),
+            Self::Compact => tr("Compacting…"),
+        }
+    }
+}
+
+/// Raw numbers reported by a maintenance action.
+enum LibraryOpResult {
+    Missing { missing: usize, restored: usize },
+    Compact { before: u64, after: u64 },
+}
+
+struct LibraryScan {
+    receiver: Receiver<LibraryScanMessage>,
+    filter: LibraryFilter,
+    progress: f32,
+    done: usize,
+    total: usize,
+}
+
+struct ImportItem {
+    record: SongRecord,
+    selected: bool,
+}
+
+struct ImportScan {
+    receiver: Receiver<LibraryScanMessage>,
+    progress: f32,
+}
+
+enum ImportAddMessage {
+    Progress(usize, usize),
+    Done(ImportAddOutcome),
+}
+
+struct ImportAddOutcome {
+    /// Source path, the copied record, and the files written for it.
+    added: Vec<(PathBuf, SongRecord, Vec<PathBuf>)>,
+    skipped: usize,
+}
+
+struct ImportAdd {
+    receiver: Receiver<ImportAddMessage>,
+    progress: f32,
+}
+
+/// Arrow-key browsing of every song in the database.
+struct LyricBrowse {
+    index: usize,
+    total: usize,
+    hit: LyricHit,
 }
 
 struct Playback {
@@ -113,9 +238,14 @@ struct Indicator {
 /// Cached metadata for a playlist entry.
 #[derive(Clone)]
 struct SongInfo {
+    code: String,
     title: String,
     artist: String,
     file_type: String,
+    bpm: f64,
+    key: String,
+    bars: u32,
+    loaded: bool,
 }
 
 pub struct KaraokeApp {
@@ -151,12 +281,27 @@ pub struct KaraokeApp {
     playlist: Vec<PathBuf>,
     playlist_index: usize,
     titles: std::collections::HashMap<PathBuf, SongInfo>,
+    /// Metadata from the song database, keyed by file path.
+    library_meta: std::collections::HashMap<PathBuf, SongInfo>,
     indicator: Option<Indicator>,
     /// Set after a song opens; the card timer starts on the next UI frame.
     song_card_pending: bool,
     /// While in the future, the song-info card is shown in the lyrics area.
     song_card_until: Option<f64>,
     playlist_rect: Rect,
+    central_rect: Rect,
+    lyric_search_rect: Rect,
+    /// Full rect of the song search popup, so the readout can stay clear of it.
+    lyric_overlay_rect: Rect,
+    /// Decoded background image, keyed by the path it was loaded from.
+    background_texture: Option<(PathBuf, egui::TextureHandle)>,
+    /// Decoded copy of the artwork shipped with the player.
+    default_background: Option<egui::TextureHandle>,
+    /// Why the last background image could not be loaded.
+    background_error: Option<String>,
+    /// The full area between the top and bottom bars, ignoring the playlist.
+    /// Lyric anchors use this so the playlist never moves the lyrics.
+    lyric_area: Rect,
     last_key_shortcut: f64,
     last_bpm_shortcut: f64,
     bpm: f64,
@@ -169,6 +314,28 @@ pub struct KaraokeApp {
     /// Song time at the end of the final bar; playback stops here.
     song_end_us: u64,
     playlist_selection: Option<usize>,
+    /// Text typed into the always-visible lyric search bar.
+    lyric_search: String,
+    /// Focus the search field when the overlay opens.
+    lyric_search_focus: bool,
+    lyric_search_id: Option<egui::Id>,
+    /// Rect of the MIDI Out flyout in the context menu (NOTHING when closed).
+    midi_menu_rect: Rect,
+    /// The search overlay is a temporary 5-second popup.
+    lyric_overlay_visible: bool,
+    lyric_overlay_until: f64,
+    /// Set when the popup closed on its own: the next Left/Right shows the
+    /// remembered song instead of moving.
+    lyric_overlay_remembered: bool,
+    lyric_browse: Option<LyricBrowse>,
+    /// Restore the playlist when the search overlay closes.
+    search_restore_playlist: bool,
+    /// Songs matching the lyric query, best match first.
+    lyric_results: Vec<LyricHit>,
+    lyric_result_index: usize,
+    lyric_query_cache: String,
+    lyric_last_query: String,
+    lyric_db: Option<Library>,
     temp_playlist_until: Option<f64>,
     temp_playlist_hidden: bool,
     /// The modal settings window.
@@ -176,8 +343,23 @@ pub struct KaraokeApp {
     /// True for the frame in which the dialog was opened, so the click that
     /// opened it cannot immediately close it through the backdrop.
     settings_just_opened: bool,
-    /// Which settings page is selected (0 = General, 1 = Text,
-    /// 2 = SoundFont, 3 = Player, 4 = Background, 5 = About).
+    /// Playlist entry the last Stop interrupted, so Play can resume it.
+    stopped_index: Option<usize>,
+    /// MIDI output ports found the last time the list was refreshed.
+    midi_ports: Vec<String>,
+    /// True once the port list has been read at least once.
+    midi_ports_loaded: bool,
+    /// Last error from choosing a MIDI output, shown under the combo.
+    midi_page_error: Option<String>,
+    /// The Split MIDI window (per-channel MIDI routing).
+    split_open: bool,
+    split_error: Option<String>,
+    /// Channels highlighted in the Split MIDI table.
+    split_selection: Vec<usize>,
+    /// Row where the current drag selection started.
+    split_drag_anchor: Option<usize>,
+    /// Which settings page is selected (0 = General, 1 = Text, 2 = MIDI,
+    /// 3 = SoundFont, 4 = Player, 5 = Background, 6 = Song Data, 7 = About).
     settings_section: usize,
     /// Which About popup is open, if any.
     about_popup: Option<AboutPopup>,
@@ -217,10 +399,45 @@ pub struct KaraokeApp {
     /// Fade-out state for the About license/credits popup.
     about_popup_fade: f32,
     about_popup_closing: bool,
+    /// True while the Song Data folder reset confirmation is open.
+    song_restore_confirm: bool,
     /// The currently open custom context menu.
     menu: Option<OpenMenu>,
     /// The native file dialog currently running on a worker thread.
     pending_dialog: Option<PendingDialog>,
+    /// The Song Database window.
+    library_open: bool,
+    library_songs: Vec<SongRecord>,
+    library_view: Vec<usize>,
+    library_query: String,
+    library_search_focus: bool,
+    /// Lowercased text used by the in-window filter, one row per song.
+    library_keys: Vec<String>,
+    library_scan: Option<LibraryScan>,
+    library_filter: LibraryFilter,
+    library_progress: f32,
+    library_error: Option<String>,
+    library_note: Option<String>,
+    /// Background result of the startup missing-file check.
+    missing_check: Option<Receiver<std::result::Result<(usize, usize), String>>>,
+    missing_checked: bool,
+    /// Background load of the browse list.
+    library_load: Option<Receiver<std::result::Result<Vec<SongRecord>, String>>>,
+    /// Background check or compaction of the database file.
+    library_op: Option<(
+        LibraryOp,
+        Receiver<std::result::Result<LibraryOpResult, String>>,
+    )>,
+    import_open: bool,
+    import_source: Option<PathBuf>,
+    import_filter: LibraryFilter,
+    import_items: Vec<ImportItem>,
+    import_view: Vec<usize>,
+    import_scan: Option<ImportScan>,
+    import_add: Option<ImportAdd>,
+    import_progress: f32,
+    import_note: Option<String>,
+    import_error: Option<String>,
 }
 
 impl Default for KaraokeApp {
@@ -251,13 +468,29 @@ impl Default for KaraokeApp {
             scrub_value: 0.0,
             error: None,
             settings: Settings::default(),
+            stopped_index: None,
+            midi_ports: Vec::new(),
+            midi_ports_loaded: false,
+            midi_page_error: None,
+            split_open: false,
+            split_error: None,
+            split_selection: Vec::new(),
+            split_drag_anchor: None,
             playlist: Vec::new(),
             playlist_index: usize::MAX,
             titles: std::collections::HashMap::new(),
+            library_meta: std::collections::HashMap::new(),
             indicator: None,
             song_card_pending: false,
             song_card_until: None,
             playlist_rect: Rect::NOTHING,
+            central_rect: Rect::NOTHING,
+            lyric_search_rect: Rect::NOTHING,
+            lyric_overlay_rect: Rect::NOTHING,
+            background_texture: None,
+            default_background: None,
+            background_error: None,
+            lyric_area: Rect::NOTHING,
             last_key_shortcut: 0.0,
             last_bpm_shortcut: 0.0,
             bpm: 120.0,
@@ -266,6 +499,20 @@ impl Default for KaraokeApp {
             meter: MeterMap::new(96, Vec::new()),
             song_end_us: 0,
             playlist_selection: None,
+            lyric_search: String::new(),
+            lyric_search_focus: false,
+            lyric_search_id: None,
+            midi_menu_rect: Rect::NOTHING,
+            lyric_overlay_visible: false,
+            lyric_overlay_until: 0.0,
+            lyric_overlay_remembered: false,
+            lyric_browse: None,
+            search_restore_playlist: false,
+            lyric_results: Vec::new(),
+            lyric_result_index: 0,
+            lyric_query_cache: String::new(),
+            lyric_last_query: String::new(),
+            lyric_db: None,
             temp_playlist_until: None,
             temp_playlist_hidden: false,
             settings_open: false,
@@ -291,8 +538,34 @@ impl Default for KaraokeApp {
             exit_confirm_closing: false,
             about_popup_fade: 1.0,
             about_popup_closing: false,
+            song_restore_confirm: false,
             menu: None,
             pending_dialog: None,
+            library_open: false,
+            library_songs: Vec::new(),
+            library_view: Vec::new(),
+            library_query: String::new(),
+            library_search_focus: false,
+            library_keys: Vec::new(),
+            library_scan: None,
+            library_filter: LibraryFilter::All,
+            library_progress: 0.0,
+            library_error: None,
+            library_note: None,
+            missing_check: None,
+            missing_checked: false,
+            library_load: None,
+            library_op: None,
+            import_open: false,
+            import_source: None,
+            import_filter: LibraryFilter::All,
+            import_items: Vec::new(),
+            import_view: Vec::new(),
+            import_scan: None,
+            import_add: None,
+            import_progress: 0.0,
+            import_note: None,
+            import_error: None,
         }
     }
 }
@@ -326,17 +599,24 @@ pub fn run(initial: Vec<PathBuf>) -> eframe::Result {
 impl KaraokeApp {
     fn new(cc: &eframe::CreationContext<'_>, initial: Vec<PathBuf>) -> Self {
         install_style(&cc.egui_ctx);
+        // The player handles Ctrl +/- itself so it can stop the auto-fit from
+        // overriding a manual zoom level.
+        cc.egui_ctx
+            .options_mut(|options| options.zoom_with_keyboard = false);
+        ensure_program_folders();
 
         let mut app = Self::default();
         app.settings = Settings::load();
         i18n::init();
         i18n::set_language(&app.settings.language);
+        app.refresh_library_meta();
         app.lyric_font_loaded = install_fonts(&cc.egui_ctx, app.settings.lyric_font.as_deref());
         app.volume = app.settings.volume;
         app.transpose = app.settings.transpose;
 
         let stored_font = app.settings.soundfont.clone().filter(|path| path.is_file());
         app.begin_startup(stored_font);
+        app.start_missing_check();
 
         // Files passed on the command line are opened once the startup splash
         // has finished and the SoundFont is ready.
@@ -355,6 +635,9 @@ impl KaraokeApp {
         let mut settings = self.settings.clone();
         if self.temp_playlist_hidden {
             settings.show_playlist = false;
+        }
+        if self.search_restore_playlist {
+            settings.show_playlist = true;
         }
         if let Err(err) = settings.save() {
             self.error = Some(format!("settings: {err:#}"));
@@ -648,9 +931,22 @@ impl KaraokeApp {
             self.titles.insert(
                 path.clone(),
                 SongInfo {
+                    code: self
+                        .library_meta
+                        .get(&path)
+                        .map(|info| info.code.clone())
+                        .unwrap_or_else(|| file_stem(&path)),
                     title,
                     artist: song.artist.clone().unwrap_or_default(),
                     file_type: file_type.to_owned(),
+                    bpm: song.bpm,
+                    key: song
+                        .key
+                        .clone()
+                        .filter(|value| !value.trim().is_empty())
+                        .unwrap_or_else(|| "C".to_owned()),
+                    bars: library::bar_count(song).unwrap_or(0),
+                    loaded: true,
                 },
             );
         }
@@ -666,7 +962,120 @@ impl KaraokeApp {
         self.playlist_selection = Some(self.playlist_index);
 
         self.path = Some(path);
+        self.stopped_index = None;
         self.save_settings();
+    }
+
+    /// The MIDI fixes described by the settings (0-based GM numbers).
+    fn midi_options(&self) -> MidiOptions {
+        MidiOptions {
+            lock_bass: self.settings.lock_bass,
+            bass_program: (self.settings.lock_bass_program.clamp(1, 128) - 1) as u8,
+            lock_drum_kit: self.settings.lock_drum_kit,
+            drum_program: (self.settings.lock_drum_program.clamp(1, 128) - 1) as u8,
+            lock_kick: self.settings.lock_kick,
+            kick_note: self.settings.lock_kick_note.min(127) as u8,
+            lock_snare: self.settings.lock_snare,
+            snare_note: self.settings.lock_snare_note.min(127) as u8,
+            metronome: self.settings.metronome,
+            metronome_hihat: self.settings.metronome_hihat,
+            metronome_first: self.settings.metronome_first.min(127) as u8,
+            metronome_other: self.settings.metronome_other.min(127) as u8,
+            sysex: self.settings.midi_sysex,
+            transpose_mode: self.settings.transpose_mode,
+            reset: self.settings.midi_reset,
+        }
+    }
+
+    /// Re-read the list of MIDI output ports.
+    fn refresh_midi_ports(&mut self) {
+        self.midi_ports = audio::output_ports();
+        self.midi_ports_loaded = true;
+    }
+
+    /// Per-channel output names from the settings (always 16 entries).
+    fn split_port_names(&self) -> [String; 16] {
+        let mut names: [String; 16] = Default::default();
+        for (index, name) in names.iter_mut().enumerate() {
+            *name = self
+                .settings
+                .split_ports
+                .get(index)
+                .cloned()
+                .unwrap_or_default();
+        }
+        names
+    }
+
+    /// Build the routing described by the settings and send it to the player.
+    fn apply_midi_routing(&mut self) -> Result<(), String> {
+        let channels = self.split_port_names();
+        let routing = audio::MidiRouting::open(&self.settings.midi_out_port, &channels)?;
+        if let Some(playback) = &self.playback {
+            let _ = playback.commands.send(Command::SetMidiRouting(routing));
+        }
+        Ok(())
+    }
+
+    /// Switch the default output (`""` = the built-in SoundFont).
+    fn apply_midi_out(&mut self, port: String) {
+        // Re-selecting the current device must not rebuild the routing.
+        if port == self.settings.midi_out_port {
+            return;
+        }
+        let previous = self.settings.midi_out_port.clone();
+        self.settings.midi_out_port = port;
+        match self.apply_midi_routing() {
+            Ok(()) => self.midi_page_error = None,
+            Err(err) => {
+                self.settings.midi_out_port = previous;
+                self.midi_page_error = Some(tr_args(
+                    "Could not open MIDI output: {}",
+                    &[&err as &dyn std::fmt::Display],
+                ));
+                let _ = self.apply_midi_routing();
+            }
+        }
+        self.save_settings();
+    }
+
+    /// Send the selected MIDI reset (Reset MIDI button).
+    fn send_midi_reset(&mut self) {
+        if let Some(playback) = &self.playback {
+            let _ = playback
+                .commands
+                .send(Command::MidiReset(self.settings.midi_reset));
+            return;
+        }
+        // No song is loaded, so only an external device can be reset.
+        let port = self.settings.midi_out_port.clone();
+        if port.is_empty() {
+            return;
+        }
+        match audio::MidiOut::open(&port) {
+            Ok(mut out) => {
+                out.reset_channels();
+                if let Some(sysex) = self.settings.midi_reset.sysex() {
+                    out.send(sysex);
+                }
+                self.midi_page_error = None;
+            }
+            Err(err) => {
+                self.midi_page_error = Some(tr_args(
+                    "Could not open MIDI output: {}",
+                    &[&format!("{err:#}") as &dyn std::fmt::Display],
+                ));
+            }
+        }
+    }
+
+    /// Push the current MIDI fixes to the audio thread.
+    fn send_midi_options(&self) {
+        if let Some(playback) = &self.playback {
+            let _ = playback
+                .commands
+                .send(Command::SetMidiOptions(self.midi_options()));
+        }
     }
 
     fn start_audio(&mut self, song: &Song) -> Result<()> {
@@ -695,10 +1104,40 @@ impl KaraokeApp {
             1.0
         };
 
+        // Validate the saved output first so a missing device falls back to
+        // the SoundFont with a visible message instead of failing playback.
+        let options = self.midi_options();
+        let routing_default = self.settings.midi_out_port.clone();
+        let routing_channels = self.split_port_names();
+        let mut pending_routing =
+            match audio::MidiRouting::open(&routing_default, &routing_channels) {
+                Ok(routing) => Some(routing),
+                Err(err) => {
+                    // Keep the saved devices: they may just be busy right now, so
+                    // the next song should try them again.
+                    let message = tr_args(
+                        "Could not open MIDI output: {}",
+                        &[&err as &dyn std::fmt::Display],
+                    );
+                    self.error = Some(message.clone());
+                    self.midi_page_error = Some(message);
+                    None
+                }
+            };
+
         let handle = audio::start(
             |rate| {
                 let mut player =
                     Player::new_with_polyphony(song, font.clone(), rate, transpose, max_polyphony)?;
+                player.set_midi_options(options);
+                // The first attempt uses the routing opened above; a retry
+                // (rejected buffer size) opens the ports again.
+                let routing = match pending_routing.take() {
+                    Some(routing) => routing,
+                    None => audio::MidiRouting::open(&routing_default, &routing_channels)
+                        .unwrap_or_else(|_| audio::MidiRouting::internal()),
+                };
+                player.set_midi_routing(routing);
                 player.set_volume(volume);
                 player.set_channel_muted(MELODY_CHANNEL, melo_muted);
                 player.set_speed(speed);
@@ -845,6 +1284,8 @@ impl KaraokeApp {
                     if is_playlist_json(&path) {
                         let added = self.import_playlist_file(&path);
                         self.play_first_added(added);
+                    } else if self.song.is_some() {
+                        self.queue_song(path);
                     } else {
                         self.open(path);
                     }
@@ -874,6 +1315,15 @@ impl KaraokeApp {
                     self.save_playlist_to(&target);
                 }
             }
+            DialogKind::BackgroundImage => {
+                if let Some(path) = paths.pop() {
+                    self.settings.background_image = Some(path);
+                    self.settings.background_style = BackgroundStyle::Image;
+                    // Force a reload even when the same file is picked again.
+                    self.background_texture = None;
+                    self.save_settings();
+                }
+            }
             DialogKind::SoundFont => {
                 if let Some(path) = paths.pop() {
                     self.reload_sound_font(Some(path));
@@ -888,6 +1338,29 @@ impl KaraokeApp {
                     self.lyric_font_loaded =
                         install_fonts(ctx, self.settings.lyric_font.as_deref());
                     self.save_settings();
+                }
+            }
+            DialogKind::NcnFolder => {
+                if let Some(path) = paths.pop() {
+                    self.settings.ncn_folder = Some(path);
+                    self.save_settings();
+                }
+            }
+            DialogKind::KmidFolder => {
+                if let Some(path) = paths.pop() {
+                    self.settings.kmid_folder = Some(path);
+                    self.save_settings();
+                }
+            }
+            DialogKind::KarFolder => {
+                if let Some(path) = paths.pop() {
+                    self.settings.kar_folder = Some(path);
+                    self.save_settings();
+                }
+            }
+            DialogKind::ImportFolder => {
+                if let Some(folder) = paths.pop() {
+                    self.start_import_scan(folder);
                 }
             }
         }
@@ -907,7 +1380,7 @@ impl KaraokeApp {
         let mut added = Vec::new();
         for path in paths {
             let path = std::path::absolute(&path).unwrap_or(path);
-            if path.is_file() && !self.playlist.contains(&path) {
+            if path.is_file() {
                 self.playlist.push(path.clone());
                 added.push(path);
             }
@@ -916,11 +1389,54 @@ impl KaraokeApp {
         added
     }
 
+    /// Append a song to the playlist without touching playback.
+    fn queue_song(&mut self, path: PathBuf) {
+        let path = std::path::absolute(&path).unwrap_or(path);
+        if !path.is_file() {
+            return;
+        }
+        self.playlist.push(path.clone());
+        if !self.titles.contains_key(&path) {
+            let info = self.load_song_info(&path);
+            self.titles.insert(path, info);
+        }
+        self.save_settings();
+    }
+
+    /// The path currently shown in the search overlay.
+    fn selected_lyric_path(&self) -> Option<PathBuf> {
+        if self.lyric_search.trim().is_empty() {
+            if let Some(browse) = &self.lyric_browse {
+                return Some(browse.hit.path.clone());
+            }
+        }
+        self.lyric_results
+            .get(self.lyric_result_index)
+            .map(|hit| hit.path.clone())
+    }
+
+    /// Enter in the search overlay: play when idle, otherwise queue the song
+    /// so the current performance is not interrupted.
+    fn select_search_song(&mut self, path: PathBuf, ctx: &egui::Context) {
+        // "Play immediately" starts a song when idle, but a loaded song is
+        // never interrupted: the selection waits in the playlist instead.
+        if self.settings.play_immediately && self.song.is_none() {
+            self.open(path);
+        } else {
+            self.queue_song(path);
+        }
+        self.hide_lyric_overlay_preserve_browse(ctx);
+    }
+
     /// When "Play immediately" is enabled, start the first new playlist entry.
     fn play_first_added(&mut self, added: Vec<PathBuf>) {
-        if self.settings.play_immediately {
+        if self.settings.play_immediately && self.song.is_none() {
             if let Some(path) = added.into_iter().next() {
-                self.open(path);
+                self.open(path.clone());
+                if let Some(index) = self.playlist.iter().rposition(|item| item == &path) {
+                    self.playlist_index = index;
+                    self.playlist_selection = Some(index);
+                }
             }
         }
     }
@@ -930,13 +1446,70 @@ impl KaraokeApp {
         if let Some(info) = self.titles.get(path) {
             return info.clone();
         }
+        self.load_song_info(path)
+    }
 
+    /// Metadata for one playlist row. The song database wins, then the
+    /// session cache, and only then is the file parsed.
+    fn playlist_info(&mut self, path: &Path) -> SongInfo {
+        if let Some(info) = self.library_meta.get(path) {
+            return info.clone();
+        }
+        if let Some(info) = self.titles.get(path) {
+            if info.loaded {
+                return info.clone();
+            }
+        }
+        let info = self.load_song_info(path);
+        self.titles.insert(path.to_owned(), info.clone());
+        info
+    }
+
+    /// Start loading the playlist metadata cache from the song database.
+    fn refresh_library_meta(&mut self) {
+        self.start_library_load();
+    }
+
+    /// Rebuild the playlist metadata cache from the loaded library rows.
+    fn rebuild_library_meta(&mut self) {
+        self.library_meta.clear();
+        // A scan or import may have stored new lyrics.
+        self.lyric_query_cache.clear();
+        self.library_keys.clear();
+        self.library_keys.reserve(self.library_songs.len());
+        for song in &self.library_songs {
+            let path = std::path::absolute(&song.path).unwrap_or_else(|_| song.path.clone());
+            self.library_keys.push(format!(
+                "{}\n{}\n{}\n{}",
+                song.code.to_lowercase(),
+                song.file_name.to_lowercase(),
+                song.title.to_lowercase(),
+                song.artist.to_lowercase()
+            ));
+            self.library_meta.insert(
+                path,
+                SongInfo {
+                    code: song.code.clone(),
+                    title: song.title.clone(),
+                    artist: song.artist.clone(),
+                    file_type: song.format.clone(),
+                    bpm: song.tempo.unwrap_or(0.0),
+                    key: song
+                        .key
+                        .clone()
+                        .filter(|value| !value.trim().is_empty())
+                        .unwrap_or_else(|| "C".to_owned()),
+                    bars: song.bars.unwrap_or(0),
+                    loaded: true,
+                },
+            );
+        }
+    }
+
+    /// Parse one file into playlist metadata without touching the cache.
+    fn load_song_info(&self, path: &Path) -> SongInfo {
         if let Ok(song) = load(path, &LoadOptions::default()) {
-            let title = song.title.clone().unwrap_or_else(|| {
-                path.file_stem()
-                    .map(|stem| stem.to_string_lossy().to_string())
-                    .unwrap_or_default()
-            });
+            let title = song.title.clone().unwrap_or_else(|| file_stem(path));
             let file_type = match song.format {
                 karaoke_player::SourceFormat::Kar => "kar",
                 karaoke_player::SourceFormat::Ncn => "ncn",
@@ -944,19 +1517,30 @@ impl KaraokeApp {
                 karaoke_player::SourceFormat::Midi => "midi",
             };
             return SongInfo {
+                code: file_stem(path),
                 title,
                 artist: song.artist.clone().unwrap_or_default(),
                 file_type: file_type.to_owned(),
+                bpm: song.bpm,
+                key: song
+                    .key
+                    .clone()
+                    .filter(|value| !value.trim().is_empty())
+                    .unwrap_or_else(|| "C".to_owned()),
+                bars: library::bar_count(&song).unwrap_or(0),
+                loaded: true,
             };
         }
 
         SongInfo {
-            title: path
-                .file_stem()
-                .map(|stem| stem.to_string_lossy().to_string())
-                .unwrap_or_default(),
+            code: file_stem(path),
+            title: file_stem(path),
             artist: String::new(),
             file_type: file_type_guess(path),
+            bpm: 0.0,
+            key: "C".to_owned(),
+            bars: 0,
+            loaded: true,
         }
     }
 
@@ -998,14 +1582,17 @@ impl KaraokeApp {
                     if !path.is_file() {
                         continue;
                     }
-                    if !self.playlist.contains(&path) {
-                        self.playlist.push(path.clone());
-                        added.push(path.clone());
-                    }
+                    self.playlist.push(path.clone());
+                    added.push(path.clone());
                     self.titles.entry(path).or_insert(SongInfo {
+                        code: String::new(),
                         title: entry.title,
                         artist: entry.artist,
                         file_type: entry.file_type,
+                        bpm: 0.0,
+                        key: "C".to_owned(),
+                        bars: 0,
+                        loaded: false,
                     });
                 }
             }
@@ -1017,6 +1604,11 @@ impl KaraokeApp {
     /// Arrow-key navigation: reveal the playlist temporarily and move the
     /// highlight without starting playback.
     fn playlist_step(&mut self, delta: isize, ctx: &egui::Context) {
+        self.dismiss_song_card();
+        if self.lyric_overlay_visible {
+            self.hide_lyric_overlay(ctx);
+        }
+        self.search_restore_playlist = false;
         let len = self.playlist.len();
 
         // Browsing the playlist dismisses the song card.
@@ -1142,13 +1734,21 @@ impl KaraokeApp {
             return;
         }
 
-        let path = self.playlist[next as usize].clone();
+        let index = next as usize;
+        let path = self.playlist[index].clone();
         self.open(path);
+        self.playlist_index = index;
+        self.playlist_selection = Some(index);
     }
 
     /// Unload the finished song at the end of the playlist while keeping the
     /// playlist itself intact.
     fn clear_played_song(&mut self) {
+        if let Some(playback) = &self.playback {
+            // Stop first so the device gets an immediate all-notes-off; the
+            // dropped stream below also sends one.
+            let _ = playback.commands.send(Command::Stop);
+        }
         self.playback = None;
         self.song = None;
         self.path = None;
@@ -1175,6 +1775,8 @@ impl KaraokeApp {
                 if index < self.playlist.len() {
                     let path = self.playlist[index].clone();
                     self.open(path);
+                    self.playlist_index = index;
+                    self.playlist_selection = Some(index);
                     return;
                 }
                 self.playlist_index = usize::MAX;
@@ -1191,130 +1793,805 @@ impl KaraokeApp {
     }
 
     fn playlist_panel(&mut self, ui: &mut egui::Ui) {
+        // Fit the playlist to the window: fullscreen keeps the normal size,
+        // while a smaller windowed player gets a smaller card.
+        let scale = window_fit_scale(ui.ctx());
+        let row_height = 50.0 * scale;
+        let no_width = 82.0 * scale;
+        let type_width = 104.0 * scale;
+        let pad = 14.0 * scale;
+
         let mut menu_request: Option<(MenuKind, Pos2)> = None;
+        let mut clicked: Option<usize> = None;
 
-        let panel = egui::Panel::left("playlist")
-            .resizable(true)
-            .default_size(230.0)
-            .min_size(170.0)
-            .frame(
-                egui::Frame::NONE
-                    .fill(Color32::from_black_alpha(165))
-                    .inner_margin(egui::Margin::symmetric(12, 12)),
+        // Keep the card on the opposite side of the lyrics: lower lyrics get a
+        // top card, upper lyrics get a bottom card.
+        let at_bottom = matches!(
+            self.settings.text_visibility,
+            karaoke_player::settings::TextVisibility::Upper
+        );
+        // A bottom card keeps a wider gap so it never touches the transport bar.
+        let margin_top = if at_bottom { 14.0 } else { 18.0 };
+        let margin_bottom = if at_bottom { 32.0 } else { 14.0 };
+        // Three rows per page, with the panel sized so they fit exactly.
+        let panel_height = (188.0 + 32.0 + margin_top + margin_bottom) * scale;
+        // Float the playlist over the lyrics instead of taking layout space,
+        // so the background keeps its full size while the card is open.
+        let area = ui.available_rect_before_wrap();
+        let card_rect = if at_bottom {
+            Rect::from_min_max(
+                Pos2::new(area.left(), area.bottom() - panel_height),
+                area.max,
             )
-            .show(ui, |ui| {
-                // Right-clicking anywhere in the panel opens this menu.
-                let background = ui.interact(
-                    ui.max_rect(),
-                    ui.scope_id().with("playlist_bg"),
-                    egui::Sense::click(),
-                );
+        } else {
+            Rect::from_min_max(area.min, Pos2::new(area.right(), area.top() + panel_height))
+        };
+        let _ = egui::Area::new(egui::Id::unique("playlist"))
+            .order(egui::Order::Middle)
+            .fixed_pos(card_rect.min)
+            .show(ui.ctx(), |ui| {
+                ui.set_width(card_rect.width());
+                ui.set_height(card_rect.height());
+                egui::Frame::NONE
+                    .fill(Color32::TRANSPARENT)
+                    .inner_margin(egui::Margin {
+                        left: (34.0 * scale).round() as i8,
+                        right: (34.0 * scale).round() as i8,
+                        top: (margin_top * scale).round() as i8,
+                        bottom: (margin_bottom * scale).round() as i8,
+                    })
+                    .show(ui, |ui| {
+                        // A floating card with a gap around it, so the playlist reads
+                        // as a panel instead of being glued to the window edges.
+                        egui::Frame::NONE
+                            .fill(Color32::from_rgba_unmultiplied(10, 10, 13, 165))
+                            .stroke(egui::Stroke::new(1.0 * scale, Color32::from_gray(72)))
+                            .corner_radius(egui::CornerRadius::same((16.0 * scale).round() as u8))
+                            .inner_margin(egui::Margin::symmetric(
+                                (24.0 * scale).round() as i8,
+                                (16.0 * scale).round() as i8,
+                            ))
+                            .show(ui, |ui| {
+                                ui.set_width(ui.available_width());
+                                ui.set_min_height(ui.available_height());
 
-                ui.horizontal(|ui| {
-                    if ui
-                        .button(tr("Prev"))
-                        .on_hover_text(tr("Previous playlist entry"))
-                        .clicked()
-                    {
-                        self.advance(-1);
-                    }
-                    if ui
-                        .button(tr("Next"))
-                        .on_hover_text(tr("Next playlist entry"))
-                        .clicked()
-                    {
-                        self.advance(1);
-                    }
-                    let repeat = self.settings.repeat;
-                    if ui
-                        .selectable_label(repeat, tr("Repeat"))
-                        .on_hover_text(tr("Repeat playlist (Ctrl+R)"))
-                        .clicked()
-                    {
-                        self.settings.repeat = !repeat;
-                        self.save_settings();
-                    }
-                    if ui.button(tr("Clear")).clicked() {
-                        self.clear_playlist();
-                    }
-                });
+                                // Right-clicking anywhere in the panel opens this menu.
+                                let background = ui.interact(
+                                    ui.max_rect(),
+                                    ui.scope_id().with("playlist_bg"),
+                                    egui::Sense::click(),
+                                );
 
-                ui.separator();
+                                let width = ui.available_width();
+                                let (header, _) = ui.allocate_exact_size(
+                                    egui::vec2(width, 36.0 * scale),
+                                    egui::Sense::hover(),
+                                );
+                                let painter = ui.painter_at(header);
+                                let header_font = FontId::proportional(15.0 * scale);
+                                painter.text(
+                                    Pos2::new(header.left() + pad, header.center().y),
+                                    egui::Align2::LEFT_CENTER,
+                                    "NO.",
+                                    header_font.clone(),
+                                    DIM,
+                                );
+                                painter.text(
+                                    Pos2::new(header.left() + no_width + pad, header.center().y),
+                                    egui::Align2::LEFT_CENTER,
+                                    "SONGS",
+                                    header_font.clone(),
+                                    DIM,
+                                );
+                                painter.text(
+                                    Pos2::new(header.right() - pad, header.center().y),
+                                    egui::Align2::RIGHT_CENTER,
+                                    "TYPE",
+                                    header_font,
+                                    DIM,
+                                );
+                                painter.line_segment(
+                                    [
+                                        Pos2::new(header.left(), header.bottom() - 0.5),
+                                        Pos2::new(header.right(), header.bottom() - 0.5),
+                                    ],
+                                    egui::Stroke::new(1.0 * scale, Color32::from_gray(70)),
+                                );
 
-                egui::ScrollArea::vertical().show(ui, |ui| {
-                    if self.playlist.is_empty() {
-                        ui.label(tr("Playlist is empty\nright-click to add songs"));
-                    }
+                                ui.add_space(2.0 * scale);
 
-                    let mut clicked = None;
+                                // Exactly one page of rows: moving past the last row
+                                // of a page brings the next page on screen.
+                                let rows_per_page = 3usize;
+                                let page_height = row_height * rows_per_page as f32;
+                                let highlighted =
+                                    self.playlist_selection.unwrap_or(self.playlist_index);
+                                let mut page = if highlighted == usize::MAX {
+                                    0
+                                } else {
+                                    highlighted / rows_per_page
+                                };
+                                // After removing songs the page may sit past the end.
+                                if !self.playlist.is_empty() {
+                                    page = page.min((self.playlist.len() - 1) / rows_per_page);
+                                }
 
-                    for index in 0..self.playlist.len() {
-                        let path = &self.playlist[index];
-                        let name = match self.titles.get(path) {
-                            Some(info) if !info.artist.is_empty() => {
-                                format!("{} — {}", info.title, info.artist)
-                            }
-                            Some(info) => info.title.clone(),
-                            None => path
-                                .file_stem()
-                                .map(|stem| stem.to_string_lossy().to_string())
-                                .unwrap_or_else(|| path.display().to_string()),
-                        };
-                        let (rect, response) = ui.allocate_exact_size(
-                            egui::vec2(ui.available_width(), 26.0),
-                            egui::Sense::click(),
-                        );
+                                if self.playlist.is_empty() {
+                                    let (empty, _) = ui.allocate_exact_size(
+                                        egui::vec2(ui.available_width(), page_height),
+                                        egui::Sense::hover(),
+                                    );
+                                    ui.painter_at(empty).text(
+                                        empty.center(),
+                                        egui::Align2::CENTER_CENTER,
+                                        tr("Playlist is empty\nright-click to add songs"),
+                                        FontId::proportional(12.0 * scale),
+                                        DIM,
+                                    );
+                                } else {
+                                    // Draw exactly one page; the arrow keys move the
+                                    // page when the highlight leaves it.
+                                    let first = page * rows_per_page;
+                                    let last = (first + rows_per_page).min(self.playlist.len());
+                                    let (list_rect, _) = ui.allocate_exact_size(
+                                        egui::vec2(ui.available_width(), page_height),
+                                        egui::Sense::hover(),
+                                    );
 
-                        let highlighted = self.playlist_selection.unwrap_or(self.playlist_index);
-                        let selected = index == highlighted;
-                        if selected || response.hovered() {
-                            let fill = if selected {
-                                Color32::from_gray(76)
-                            } else {
-                                Color32::from_gray(36)
-                            };
-                            ui.painter().rect_filled(rect, 4.0, fill);
-                        }
-                        ui.painter().text(
-                            rect.left_center() + egui::vec2(8.0, 0.0),
-                            egui::Align2::LEFT_CENTER,
-                            &name,
-                            FontId::proportional(14.0),
-                            FG,
-                        );
-                        let response = response.on_hover_text(path.display().to_string());
+                                    for index in first..last {
+                                        let path = self.playlist[index].clone();
+                                        let info = self.playlist_info(&path);
+                                        let row = Rect::from_min_size(
+                                            Pos2::new(
+                                                list_rect.left(),
+                                                list_rect.top()
+                                                    + (index - first) as f32 * row_height,
+                                            ),
+                                            egui::vec2(list_rect.width(), row_height),
+                                        );
+                                        let response = ui.interact(
+                                            row,
+                                            ui.scope_id().with(("playlist_row", index)),
+                                            egui::Sense::click(),
+                                        );
 
-                        if response.clicked() {
-                            clicked = Some(index);
-                        }
+                                        let selected = index == highlighted;
+                                        if selected || response.hovered() {
+                                            let fill = if selected {
+                                                Color32::from_gray(72)
+                                            } else {
+                                                Color32::from_gray(34)
+                                            };
+                                            ui.painter().rect_filled(row, 3.0 * scale, fill);
+                                        }
 
-                        if response.secondary_clicked() {
-                            if let Some(pos) = ui.ctx().input(|i| i.pointer.interact_pos()) {
-                                menu_request = Some((MenuKind::Row(index), pos));
-                            }
-                        }
-                    }
+                                        let painter = ui.painter_at(row);
+                                        let font = FontId::proportional(21.0 * scale);
+                                        painter.text(
+                                            Pos2::new(row.left() + pad, row.center().y),
+                                            egui::Align2::LEFT_CENTER,
+                                            format!("{:02}", index + 1),
+                                            font.clone(),
+                                            if selected { FG } else { DIM },
+                                        );
+                                        painter.text(
+                                            Pos2::new(row.right() - pad, row.center().y),
+                                            egui::Align2::RIGHT_CENTER,
+                                            info.file_type.to_uppercase(),
+                                            font.clone(),
+                                            if selected { FG } else { DIM },
+                                        );
 
-                    if let Some(index) = clicked {
-                        let path = self.playlist[index].clone();
-                        self.open(path);
-                    }
-                });
+                                        let songs_left = row.left() + no_width + pad;
+                                        let songs_right = row.right() - type_width;
+                                        let songs = painter.with_clip_rect(Rect::from_min_max(
+                                            Pos2::new(songs_left, row.top()),
+                                            Pos2::new(songs_right, row.bottom()),
+                                        ));
+                                        // A highlighted row uses one solid white so every
+                                        // column reads the same.
+                                        let secondary = if selected { FG } else { DIM };
+                                        let mut x = songs_left;
+                                        let code = if info.code.is_empty() {
+                                            file_stem(&path)
+                                        } else {
+                                            info.code.clone()
+                                        };
+                                        draw_playlist_segment(
+                                            &songs,
+                                            &mut x,
+                                            row.center().y,
+                                            &code,
+                                            &font,
+                                            secondary,
+                                            14.0 * scale,
+                                        );
+                                        // Plain MIDI rows fall back to the file name as
+                                        // the title; do not print it twice.
+                                        if !info.title.is_empty()
+                                            && !info.title.trim().eq_ignore_ascii_case(code.trim())
+                                        {
+                                            draw_playlist_segment(
+                                                &songs,
+                                                &mut x,
+                                                row.center().y,
+                                                &info.title,
+                                                &font,
+                                                FG,
+                                                10.0 * scale,
+                                            );
+                                        }
+                                        let meta = format!(
+                                            "{:.0}-({})-[{}]",
+                                            info.bpm, info.key, info.bars
+                                        );
+                                        draw_playlist_segment(
+                                            &songs,
+                                            &mut x,
+                                            row.center().y,
+                                            &meta,
+                                            &font,
+                                            secondary,
+                                            8.0 * scale,
+                                        );
+                                        if !info.artist.is_empty() {
+                                            draw_playlist_segment(
+                                                &songs,
+                                                &mut x,
+                                                row.center().y,
+                                                &format!("-> {}", info.artist),
+                                                &font,
+                                                secondary,
+                                                0.0,
+                                            );
+                                        }
 
-                if background.secondary_clicked() {
-                    if let Some(pos) = ui.ctx().input(|i| i.pointer.interact_pos()) {
-                        menu_request = Some((MenuKind::Background, pos));
-                    }
-                }
+                                        if response.clicked() {
+                                            clicked = Some(index);
+                                        }
+                                        if response.secondary_clicked() {
+                                            if let Some(pos) =
+                                                ui.ctx().input(|i| i.pointer.interact_pos())
+                                            {
+                                                menu_request = Some((MenuKind::Row(index), pos));
+                                            }
+                                        }
+                                    }
+                                }
+
+                                if background.secondary_clicked() {
+                                    if let Some(pos) = ui.ctx().input(|i| i.pointer.interact_pos())
+                                    {
+                                        menu_request = Some((MenuKind::Background, pos));
+                                    }
+                                }
+                            });
+                    });
             });
 
-        // Remember where the panel is so the wheel can scroll it instead of
+        // Remember where the card is so the wheel can scroll it instead of
         // changing the volume.
-        self.playlist_rect = panel.response.rect;
+        self.playlist_rect = card_rect;
 
+        if let Some(index) = clicked {
+            if let Some(path) = self.playlist.get(index).cloned() {
+                self.open(path);
+                self.playlist_index = index;
+                self.playlist_selection = Some(index);
+            }
+        }
         if let Some((kind, pos)) = menu_request {
             self.open_menu(kind, pos);
         }
+    }
+
+    fn dismiss_song_card(&mut self) {
+        self.song_card_until = None;
+        self.song_card_pending = false;
+    }
+
+    fn show_lyric_overlay(&mut self, ctx: &egui::Context) {
+        self.dismiss_song_card();
+        let now = ctx.input(|i| i.time);
+        self.search_restore_playlist = self.settings.show_playlist && !self.temp_playlist_hidden;
+        if self.settings.show_playlist {
+            self.settings.show_playlist = false;
+        }
+        self.temp_playlist_until = None;
+        self.temp_playlist_hidden = false;
+        self.lyric_overlay_visible = true;
+        self.lyric_overlay_until = now + self.settings.popup_seconds as f64;
+        self.lyric_search_focus = true;
+    }
+
+    fn hide_lyric_overlay(&mut self, ctx: &egui::Context) {
+        self.lyric_overlay_visible = false;
+        self.lyric_overlay_until = 0.0;
+        self.lyric_overlay_remembered = false;
+        if self.search_restore_playlist {
+            self.settings.show_playlist = true;
+            self.search_restore_playlist = false;
+        }
+        self.lyric_search.clear();
+        self.lyric_results.clear();
+        self.lyric_result_index = 0;
+        self.lyric_query_cache.clear();
+        self.lyric_last_query.clear();
+        self.lyric_browse = None;
+        self.lyric_search_rect = Rect::NOTHING;
+        if let Some(id) = self.lyric_search_id.take() {
+            ctx.data_mut(|data| data.remove::<egui::widgets::text_edit::TextEditState>(id));
+        }
+        ctx.memory_mut(|memory| memory.stop_text_input());
+    }
+
+    fn hide_lyric_overlay_preserve_browse(&mut self, ctx: &egui::Context) {
+        let browse = self.lyric_browse.take();
+        self.hide_lyric_overlay(ctx);
+        self.lyric_browse = browse;
+    }
+
+    /// Timeout close: the popup hides but the query and its results stay, so
+    /// Left/Right reopens on the same song.
+    fn hide_lyric_overlay_keep_search(&mut self, ctx: &egui::Context) {
+        self.lyric_overlay_visible = false;
+        self.lyric_overlay_until = 0.0;
+        if self.search_restore_playlist {
+            self.settings.show_playlist = true;
+            self.search_restore_playlist = false;
+        }
+        self.lyric_search_rect = Rect::NOTHING;
+        if let Some(id) = self.lyric_search_id.take() {
+            ctx.data_mut(|data| data.remove::<egui::widgets::text_edit::TextEditState>(id));
+        }
+        ctx.memory_mut(|memory| memory.stop_text_input());
+        self.lyric_overlay_remembered = true;
+    }
+
+    fn update_lyric_overlay(&mut self, ctx: &egui::Context) {
+        if self.lyric_overlay_visible && ctx.input(|i| i.time) > self.lyric_overlay_until {
+            self.hide_lyric_overlay_keep_search(ctx);
+        }
+    }
+
+    /// Move through the current search results, or through every song in the
+    /// database when the search box is empty.
+    fn step_lyric_selection(&mut self, delta: isize) {
+        let query = self.lyric_search.trim().to_owned();
+        if !query.is_empty() || (self.lyric_browse.is_none() && !self.lyric_results.is_empty()) {
+            let len = self.lyric_results.len();
+            if len == 0 {
+                return;
+            }
+            let index = (self.lyric_result_index as isize + delta).rem_euclid(len as isize);
+            self.lyric_result_index = index as usize;
+            return;
+        }
+
+        if self.lyric_db.is_none() {
+            self.lyric_db = Library::open_default().ok();
+        }
+        let total = match &self.lyric_browse {
+            Some(browse) => browse.total,
+            None => {
+                let Some(library) = self.lyric_db.as_ref() else {
+                    return;
+                };
+                library.active_song_count().unwrap_or(0)
+            }
+        };
+        if total == 0 {
+            self.lyric_browse = None;
+            return;
+        }
+        let index = match &self.lyric_browse {
+            Some(browse) => (browse.index as isize + delta).rem_euclid(total as isize) as usize,
+            None => {
+                if delta < 0 {
+                    total - 1
+                } else {
+                    0
+                }
+            }
+        };
+        let hit = {
+            let Some(library) = self.lyric_db.as_ref() else {
+                return;
+            };
+            match library.song_hit_at(index) {
+                Ok(Some(hit)) => hit,
+                _ => return,
+            }
+        };
+        self.lyric_browse = Some(LyricBrowse { index, total, hit });
+    }
+
+    fn load_lyric_query(&mut self, query: &str) {
+        if self.lyric_db.is_none() {
+            self.lyric_db = Library::open_default().ok();
+        }
+        let Some(library) = self.lyric_db.as_ref() else {
+            return;
+        };
+        let mut matches = library.search(query, 50).unwrap_or_default();
+        // If the exact text has no hits, fall back to the longest prefix that
+        // still matches, so a half-typed phrase still shows useful songs.
+        if matches.is_empty() {
+            let mut fallback = query.to_owned();
+            while fallback.chars().count() > 1 {
+                fallback.pop();
+                if let Ok(found) = library.search(&fallback, 50) {
+                    if !found.is_empty() {
+                        matches = found;
+                        break;
+                    }
+                }
+            }
+        }
+        // After the matches, list the rest of the library so Left/Right can
+        // always browse on to the remaining songs.
+        let mut seen: HashSet<PathBuf> = matches.iter().map(|hit| hit.path.clone()).collect();
+        for record in &self.library_songs {
+            if matches.len() >= 500 {
+                break;
+            }
+            if record.missing || seen.contains(&record.path) {
+                continue;
+            }
+            seen.insert(record.path.clone());
+            let preview = record.lyr_preview.clone();
+            matches.push(LyricHit {
+                code: record.code.clone(),
+                format: record.format.clone(),
+                path: record.path.clone(),
+                title: record.title.clone(),
+                artist: record.artist.clone(),
+                key: record.key.clone(),
+                tempo: record.tempo,
+                bars: record.bars,
+                preview: preview.unwrap_or_default(),
+            });
+        }
+        self.lyric_results = matches;
+    }
+
+    fn refresh_lyric_results(&mut self) {
+        let query = self.lyric_search.trim().to_owned();
+        if query == self.lyric_query_cache {
+            return;
+        }
+        let previous = std::mem::replace(&mut self.lyric_query_cache, query.clone());
+        self.lyric_result_index = 0;
+        self.lyric_results.clear();
+        if query.is_empty() {
+            // After deleting the whole query, keep showing results based on
+            // the last character that was typed.
+            if previous.is_empty() {
+                return;
+            }
+            let last = self
+                .lyric_last_query
+                .chars()
+                .last()
+                .map(|ch| ch.to_string())
+                .unwrap_or_default();
+            if !last.is_empty() {
+                self.load_lyric_query(&last);
+            }
+            return;
+        }
+        self.lyric_last_query = query.clone();
+        self.lyric_browse = None;
+        self.load_lyric_query(&query);
+    }
+
+    fn lyric_search_overlay(&mut self, ctx: &egui::Context) {
+        self.refresh_lyric_results();
+
+        let scale = window_fit_scale(ctx) * SEARCH_POPUP_SCALE;
+        let band_alpha = 200u8;
+        let bar_alpha = 120u8;
+        // Proportions follow the reference song list: a black info bar on top
+        // and white boxes underneath. The search box matches the bar, while the
+        // lyric preview keeps its smaller height and text.
+        // Both boxes are the same size and sit centred in the white half.
+        let box_height = 34.0 * scale;
+        // The bar is tall enough for Thai vowels that hang below the line.
+        let header_height = 42.0 * scale;
+        let gap = 8.0 * scale;
+        let white_gap = 10.0 * scale;
+        // The boxes sit near the bottom edge, like the reference song list.
+        let bottom_gap = 4.0 * scale;
+        let margin = 10.0 * scale;
+        // Keep the text and boxes away from the panel edges.
+        let padding = (20.0 * scale).round();
+        // Keep the panel clear of the window edges and rounded corners.
+        let inset = (16.0 * scale).round();
+        let height = margin + header_height + white_gap + bottom_gap + box_height;
+
+        let query = self.lyric_search.trim().to_owned();
+        self.lyric_result_index = self
+            .lyric_result_index
+            .min(self.lyric_results.len().saturating_sub(1));
+        let display = if query.is_empty() {
+            self.lyric_browse
+                .as_ref()
+                .map(|browse| browse.hit.clone())
+                .or_else(|| self.lyric_results.get(self.lyric_result_index).cloned())
+        } else {
+            self.lyric_results.get(self.lyric_result_index).cloned()
+        };
+
+        let mut code = String::new();
+        let mut title = String::new();
+        let mut artist = String::new();
+        let mut meta = String::new();
+        let mut file_type = String::new();
+        let mut preview: Option<String> = None;
+        let mut message: Option<String> = None;
+
+        if let Some(hit) = &display {
+            code = hit.code.clone();
+            title = hit.title.clone();
+            artist = hit.artist.clone();
+            let key = hit_key(
+                hit.key.as_deref().unwrap_or("C"),
+                &hit.path,
+                self.path.as_deref(),
+                self.transpose,
+            );
+            meta = format!(
+                "{:.0}-({})-[{}]",
+                hit.tempo.unwrap_or(0.0),
+                key,
+                hit.bars.unwrap_or(0)
+            );
+            file_type = hit.format.to_uppercase();
+            if hit.preview.trim().is_empty() {
+                message = Some(tr("No lyrics in this song"));
+            } else {
+                preview = Some(hit.preview.clone());
+            }
+        } else if query.is_empty() {
+            message = Some(tr("Type to find a song"));
+        } else {
+            message = Some(tr("No songs match that search"));
+        }
+
+        // Sit opposite the lyric lines: they are at the bottom by default, so
+        // the popup takes the top; with the lines moved up it drops below them.
+        let top_edge = self.central_rect.top() + inset;
+        let bottom_edge =
+            (self.central_rect.bottom() - inset - height).max(self.central_rect.top() + inset);
+        // Sit opposite the lyric lines: they are at the bottom by default, so
+        // the popup takes the top; with the lines moved up it drops below them.
+        let top = match self.settings.text_visibility {
+            TextVisibility::Upper => bottom_edge,
+            _ => top_edge,
+        };
+        let rect = Rect::from_min_size(
+            Pos2::new(self.central_rect.left() + inset, top),
+            egui::vec2((self.central_rect.width() - inset * 2.0).max(240.0), height),
+        );
+        self.lyric_overlay_rect = rect;
+
+        egui::Area::new(egui::Id::unique("lyric_search_overlay"))
+            .order(egui::Order::Middle)
+            .fixed_pos(rect.min)
+            .show(ctx, |ui| {
+                ui.set_width(rect.width());
+                ui.set_height(rect.height());
+                egui::Frame::NONE
+                    // Transparent: the black bar and the white half are painted
+                    // separately so each blends with the lyrics behind it.
+                    .fill(Color32::TRANSPARENT)
+                    .stroke(egui::Stroke::new(1.0 * scale, Color32::from_gray(40)))
+                    .corner_radius(egui::CornerRadius::same((6.0 * scale) as u8))
+                    .inner_margin(egui::Margin::ZERO)
+                    .show(ui, |ui| {
+                        // The gaps below are exact: no automatic item spacing,
+                        // so the boxes stay centred in the white half.
+                        ui.spacing_mut().item_spacing = egui::vec2(0.0, 0.0);
+                        let width = ui.available_width();
+                        let panel = ui.max_rect();
+                        let radius = (6.0 * scale) as u8;
+
+                        let (header, _) = ui.allocate_exact_size(
+                            egui::vec2(width, margin + header_height),
+                            egui::Sense::hover(),
+                        );
+                        // Black info bar across the whole panel width.
+                        ui.painter().rect_filled(
+                            header,
+                            egui::CornerRadius {
+                                nw: radius,
+                                ne: radius,
+                                sw: 0,
+                                se: 0,
+                            },
+                            Color32::from_rgba_unmultiplied(0, 0, 0, bar_alpha),
+                        );
+                        // White half under the bar, blending with the lyrics.
+                        let lower =
+                            Rect::from_min_max(Pos2::new(panel.left(), header.bottom()), panel.max);
+                        ui.painter().rect_filled(
+                            lower,
+                            egui::CornerRadius {
+                                nw: 0,
+                                ne: 0,
+                                sw: radius,
+                                se: radius,
+                            },
+                            Color32::from_rgba_unmultiplied(255, 255, 255, band_alpha),
+                        );
+                        let header = Rect::from_min_size(
+                            Pos2::new(header.left() + padding, header.top() + margin),
+                            egui::vec2((header.width() - padding * 2.0).max(0.0), header_height),
+                        );
+                        let painter = ui.painter_at(header);
+                        let header_font = FontId::proportional(26.0 * scale);
+                        let mut x = header.left();
+                        draw_playlist_segment(
+                            &painter,
+                            &mut x,
+                            header.center().y,
+                            &code,
+                            &header_font,
+                            FG,
+                            18.0 * scale,
+                        );
+                        draw_playlist_segment(
+                            &painter,
+                            &mut x,
+                            header.center().y,
+                            &title,
+                            &header_font,
+                            FG,
+                            16.0 * scale,
+                        );
+                        draw_playlist_segment(
+                            &painter,
+                            &mut x,
+                            header.center().y,
+                            &meta,
+                            &header_font,
+                            FG,
+                            16.0 * scale,
+                        );
+                        if !artist.is_empty() {
+                            draw_playlist_segment(
+                                &painter,
+                                &mut x,
+                                header.center().y,
+                                &format!("-> {}", artist),
+                                &header_font,
+                                FG,
+                                14.0 * scale,
+                            );
+                        }
+                        if !file_type.is_empty() {
+                            draw_playlist_segment(
+                                &painter,
+                                &mut x,
+                                header.center().y,
+                                &format!("({})", file_type),
+                                &header_font,
+                                FG,
+                                0.0,
+                            );
+                        }
+                        ui.add_space(white_gap);
+
+                        let (row, _) = ui.allocate_exact_size(
+                            egui::vec2(width, box_height),
+                            egui::Sense::hover(),
+                        );
+                        // Inset the boxes so they never touch the panel edge.
+                        let row = Rect::from_min_max(
+                            Pos2::new(row.left() + padding, row.top()),
+                            Pos2::new(row.right() - padding, row.bottom()),
+                        );
+                        let input_width = (row.width() * 0.22)
+                            .clamp(140.0 * scale, 260.0 * scale)
+                            .min(row.width() * 0.4);
+                        let input_rect =
+                            Rect::from_min_size(row.min, egui::vec2(input_width, box_height));
+                        let preview_rect = Rect::from_min_size(
+                            Pos2::new(input_rect.right() + gap, row.top()),
+                            egui::vec2(
+                                (row.right() - (input_rect.right() + gap)).max(0.0),
+                                box_height,
+                            ),
+                        );
+                        let painter = ui.painter_at(row);
+                        for rect in [input_rect, preview_rect] {
+                            // The white band shows through: only the border is
+                            // painted, so the boxes match the panel exactly.
+                            painter.rect_filled(rect, 0.0, Color32::TRANSPARENT);
+                            painter.rect_stroke(
+                                rect,
+                                0.0,
+                                egui::Stroke::new(1.0 * scale, BG),
+                                egui::StrokeKind::Inside,
+                            );
+                        }
+
+                        let search_id = ui.make_persistent_id("lyric_search_input");
+                        self.lyric_search_id = Some(search_id);
+                        if self.lyric_search_focus {
+                            // Start typing at the end of any seeded text, even
+                            // if a stale cursor was persisted from last time.
+                            ui.ctx().data_mut(|data| {
+                                data.remove::<egui::widgets::text_edit::TextEditState>(search_id);
+                            });
+                            ui.memory_mut(|memory| memory.request_focus(search_id));
+                            self.lyric_search_focus = false;
+                        }
+                        // Keep the insertion point at the end so the seeded
+                        // text and anything typed afterwards stay in order.
+                        let end = egui::text::CCursor::new(self.lyric_search.chars().count());
+                        let mut state =
+                            egui::widgets::text_edit::TextEditState::load(ui.ctx(), search_id)
+                                .unwrap_or_default();
+                        state
+                            .cursor
+                            .set_char_range(Some(egui::text::CCursorRange::one(end)));
+                        state.store(ui.ctx(), search_id);
+                        let edit = egui::TextEdit::singleline(&mut self.lyric_search)
+                            .id(search_id)
+                            .frame(egui::Frame::NONE)
+                            .text_color(BG)
+                            .font(FontId::proportional(header_font.size))
+                            .align(egui::Align2::LEFT_CENTER)
+                            .cursor_at_end(true)
+                            .margin(egui::Margin::symmetric(
+                                (14.0 * scale).round() as i8,
+                                (4.0 * scale).round() as i8,
+                            ));
+                        let edit_response = ui.put(input_rect.shrink(2.0 * scale), edit);
+                        if edit_response.changed() {
+                            self.lyric_overlay_until =
+                                ui.ctx().input(|i| i.time) + self.settings.popup_seconds as f64;
+                        }
+                        if let Some(text) = &preview {
+                            // Clip left and right only: clipping the top and
+                            // bottom would cut Thai vowels above and below.
+                            let clip = Rect::from_min_max(
+                                Pos2::new(preview_rect.left() + 12.0 * scale, preview_rect.top()),
+                                Pos2::new(
+                                    preview_rect.right() - 12.0 * scale,
+                                    preview_rect.bottom(),
+                                ),
+                            );
+                            painter.with_clip_rect(clip).text(
+                                Pos2::new(
+                                    preview_rect.left() + 14.0 * scale,
+                                    preview_rect.center().y,
+                                ),
+                                egui::Align2::LEFT_CENTER,
+                                text,
+                                FontId::proportional(14.0 * scale),
+                                BG,
+                            );
+                        } else if let Some(text) = &message {
+                            painter.with_clip_rect(preview_rect).text(
+                                Pos2::new(
+                                    preview_rect.left() + 14.0 * scale,
+                                    preview_rect.center().y,
+                                ),
+                                egui::Align2::LEFT_CENTER,
+                                text,
+                                FontId::proportional(12.5 * scale),
+                                Color32::from_gray(90),
+                            );
+                        }
+
+                        // Leave only a thin strip under the boxes.
+                        ui.add_space(bottom_gap);
+                    });
+            });
+
+        self.lyric_search_rect = rect;
     }
 
     fn open_settings(&mut self) {
@@ -1324,6 +2601,7 @@ impl KaraokeApp {
         self.about_popup = None;
         self.about_popup_closing = false;
         self.about_popup_fade = 1.0;
+        self.song_restore_confirm = false;
         self.settings_closing = false;
         self.settings_fade = 1.0;
     }
@@ -1346,7 +2624,8 @@ impl KaraokeApp {
         let mut sends_changed = false;
         let mut buffer_changed = false;
         let mut text_changed = false;
-        let popup_was_open = self.about_popup.is_some();
+        let popup_was_open =
+            self.about_popup.is_some() || self.song_restore_confirm || self.library_open;
 
         let dt = ctx.input(|i| i.stable_dt).min(0.1);
         if self.settings_closing {
@@ -1438,30 +2717,45 @@ impl KaraokeApp {
                             {
                                 self.settings_section = 1;
                             }
+                            if nav_row(ui, &tr("MIDI"), self.settings_section == 2, Icon::Music)
+                                .clicked()
+                            {
+                                self.settings_section = 2;
+                            }
                             if nav_row(
                                 ui,
                                 &tr("SoundFont"),
-                                self.settings_section == 2,
+                                self.settings_section == 3,
                                 Icon::AudioLines,
                             )
                             .clicked()
                             {
-                                self.settings_section = 2;
+                                self.settings_section = 3;
                             }
-                            if nav_row(ui, &tr("Player"), self.settings_section == 3, Icon::Play)
+                            if nav_row(ui, &tr("Player"), self.settings_section == 4, Icon::Play)
                                 .clicked()
                             {
-                                self.settings_section = 3;
+                                self.settings_section = 4;
                             }
                             if nav_row(
                                 ui,
                                 &tr("Background"),
-                                self.settings_section == 4,
+                                self.settings_section == 5,
                                 Icon::Image,
                             )
                             .clicked()
                             {
-                                self.settings_section = 4;
+                                self.settings_section = 5;
+                            }
+                            if nav_row(
+                                ui,
+                                &tr("Song Data"),
+                                self.settings_section == 6,
+                                Icon::Database,
+                            )
+                            .clicked()
+                            {
+                                self.settings_section = 6;
                             }
 
                             // About is pinned to the bottom of the column.
@@ -1469,10 +2763,10 @@ impl KaraokeApp {
                             if remaining > 0.0 {
                                 ui.add_space(remaining);
                             }
-                            if nav_row(ui, &tr("About"), self.settings_section == 5, Icon::Info)
+                            if nav_row(ui, &tr("About"), self.settings_section == 7, Icon::Info)
                                 .clicked()
                             {
-                                self.settings_section = 5;
+                                self.settings_section = 7;
                             }
                         },
                     );
@@ -1498,7 +2792,7 @@ impl KaraokeApp {
                             ui.with_layout(Layout::top_down(Align::Min), |ui| {
                                 ui.spacing_mut().item_spacing = egui::vec2(10.0, 8.0);
 
-                                if self.settings_section == 2 {
+                                if self.settings_section == 3 {
                                     ui.add_space(14.0);
                                     let button_width = 36.0f32;
                                     let field_width =
@@ -1729,7 +3023,7 @@ impl KaraokeApp {
                                             );
                                         });
 
-                                        ui.add_space(20.0);
+                                        ui.add_space(28.0);
 
                                         // Drum (channel 10) sends.
                                         slider_group(ui, "DRUM", 118.0, |ui| {
@@ -1753,11 +3047,15 @@ impl KaraokeApp {
                                     });
                                 } else if self.settings_section == 1 {
                                     text_changed = self.text_page(ui);
-                                } else if self.settings_section == 3 {
-                                    text_changed |= self.player_page(ui);
+                                } else if self.settings_section == 2 {
+                                    text_changed |= self.midi_page(ui);
                                 } else if self.settings_section == 4 {
-                                    text_changed |= self.background_page(ui);
+                                    text_changed |= self.player_page(ui);
                                 } else if self.settings_section == 5 {
+                                    text_changed |= self.background_page(ui);
+                                } else if self.settings_section == 6 {
+                                    text_changed |= self.song_data_page(ui);
+                                } else if self.settings_section == 7 {
                                     self.about_page(ui);
                                 } else {
                                     text_changed |= self.general_page(ui);
@@ -1826,6 +3124,12 @@ impl KaraokeApp {
             self.about_popup = None;
             self.about_popup_closing = false;
             self.about_popup_fade = 1.0;
+            self.song_restore_confirm = false;
+            self.library_open = false;
+            self.library_scan = None;
+            self.import_open = false;
+            self.import_scan = None;
+            self.import_add = None;
             self.settings_save_at = None;
             self.save_settings();
         }
@@ -1993,6 +3297,488 @@ impl KaraokeApp {
         changed
     }
 
+    /// The "MIDI" settings page: output, voice locks and the metronome.
+    fn midi_page(&mut self, ui: &mut egui::Ui) -> bool {
+        let mut changed = false;
+        ui.add_space(24.0);
+
+        // Layout copied from the design: the output row spans the left column,
+        // the buttons sit at the top right and the metronome below them.
+        ui.horizontal_top(|ui| {
+            ui.spacing_mut().item_spacing.x = 0.0;
+            ui.vertical(|ui| {
+                ui.spacing_mut().item_spacing.y = 6.0;
+                ui.set_width(344.0);
+
+                ui.horizontal(|ui| {
+                    ui.spacing_mut().item_spacing.x = 0.0;
+                    let left = ui.max_rect().left();
+                    pad_to(ui, left, 30.0);
+                    ui.label(RichText::new(tr("MIDI Out")).size(13.0));
+                    pad_to(ui, left, 258.0);
+                    changed |= ui
+                        .add(egui::Checkbox::new(
+                            &mut self.settings.midi_sysex,
+                            RichText::new("MIDI SysEx").size(12.0),
+                        ))
+                        .changed();
+                });
+
+                if !self.midi_ports_loaded {
+                    self.refresh_midi_ports();
+                }
+                let selection = self.settings.midi_out_port.clone();
+                let selected_text = if selection.is_empty() {
+                    tr("RustySynth SoundFont")
+                } else {
+                    selection.clone()
+                };
+                let mut chosen: Option<String> = None;
+                let mut refresh = false;
+                ui.horizontal(|ui| {
+                    ui.spacing_mut().item_spacing.x = 0.0;
+                    ui.add_space(30.0);
+                    egui::ComboBox::from_id_salt("midi_out")
+                        .width(270.0)
+                        .selected_text(selected_text)
+                        .show_ui(ui, |ui| {
+                            if ui
+                                .selectable_label(selection.is_empty(), tr("RustySynth SoundFont"))
+                                .clicked()
+                            {
+                                chosen = Some(String::new());
+                            }
+                            for port in &self.midi_ports {
+                                if ui.selectable_label(&selection == port, port).clicked() {
+                                    chosen = Some(port.clone());
+                                }
+                            }
+                        });
+                    ui.add_space(8.0);
+                    if ui
+                        .add_sized([26.0, 22.0], egui::Button::new(Icon::Repeat2.rich(12.0)))
+                        .on_hover_text(tr("Refresh MIDI outputs"))
+                        .clicked()
+                    {
+                        refresh = true;
+                    }
+                });
+                if refresh {
+                    self.refresh_midi_ports();
+                }
+                if let Some(port) = chosen {
+                    self.apply_midi_out(port);
+                }
+                if let Some(error) = &self.midi_page_error {
+                    ui.label(
+                        RichText::new(error.clone())
+                            .size(11.0)
+                            .color(Color32::from_rgb(0xE0, 0x6A, 0x6A)),
+                    );
+                }
+
+                ui.add_space(48.0);
+                ui.spacing_mut().item_spacing.y = 10.0;
+                changed |= lock_row(
+                    ui,
+                    &tr("Lock bass voice"),
+                    &mut self.settings.lock_bass,
+                    &mut self.settings.lock_bass_program,
+                    &BASS_PROGRAMS,
+                );
+                changed |= lock_row(
+                    ui,
+                    &tr("Lock drum kit"),
+                    &mut self.settings.lock_drum_kit,
+                    &mut self.settings.lock_drum_program,
+                    &DRUM_KITS,
+                );
+                changed |= lock_row(
+                    ui,
+                    &tr("Lock kick"),
+                    &mut self.settings.lock_kick,
+                    &mut self.settings.lock_kick_note,
+                    &KICK_NOTES,
+                );
+                changed |= lock_row(
+                    ui,
+                    &tr("Lock snare"),
+                    &mut self.settings.lock_snare,
+                    &mut self.settings.lock_snare_note,
+                    &SNARE_NOTES,
+                );
+            });
+
+            ui.add_space(26.0);
+            ui.vertical(|ui| {
+                ui.spacing_mut().item_spacing.y = 8.0;
+                ui.set_width(150.0);
+                ui.add_space(9.0);
+                ui.horizontal(|ui| {
+                    ui.add_space(31.0);
+                    if ui
+                        .add_sized([125.0, 28.0], egui::Button::new(tr("Reset MIDI")))
+                        .clicked()
+                    {
+                        self.send_midi_reset();
+                    }
+                });
+                ui.horizontal(|ui| {
+                    ui.add_space(31.0);
+                    if ui
+                        .add_sized([125.0, 28.0], egui::Button::new(tr("Split MIDI")))
+                        .clicked()
+                    {
+                        self.split_open = true;
+                        self.refresh_midi_ports();
+                    }
+                });
+
+                ui.add_space(29.0);
+                ui.horizontal(|ui| {
+                    // The metronome group sits a touch further right.
+                    ui.add_space(6.0);
+                    ui.label(RichText::new(tr("Metronome")).size(13.0));
+                });
+                ui.add_space(6.0);
+                ui.horizontal(|ui| {
+                    ui.add_space(6.0);
+                    changed |= ui
+                        .add(egui::Checkbox::new(
+                            &mut self.settings.metronome,
+                            RichText::new(tr("Enable")).size(12.0),
+                        ))
+                        .changed();
+                    ui.add_space(14.0);
+                    changed |= ui
+                        .add(egui::Checkbox::new(
+                            &mut self.settings.metronome_hihat,
+                            RichText::new("Hihat").size(12.0),
+                        ))
+                        .on_hover_text(tr("Use a closed hi-hat (42) for every beat"))
+                        .changed();
+                });
+                ui.add_space(14.0);
+                ui.spacing_mut().item_spacing.y = 12.0;
+                // The closed hi-hat replaces both beat notes, so the fields are
+                // disabled while it is selected.
+                ui.add_enabled_ui(!self.settings.metronome_hihat, |ui| {
+                    changed |= note_row(ui, &tr("First beat"), &mut self.settings.metronome_first);
+                    changed |= note_row(ui, &tr("Other beats"), &mut self.settings.metronome_other);
+                });
+            });
+        });
+
+        if changed {
+            self.send_midi_options();
+        }
+        changed
+    }
+
+    /// The Split MIDI window: a channel table where a click or a drag
+    /// selects rows so one output can be assigned to a whole group.
+    fn split_modal(&mut self, ctx: &egui::Context) {
+        let mut close = false;
+        let mut changed = false;
+        let mut reset = false;
+        let default_port = if self.settings.midi_out_port.is_empty() {
+            tr("RustySynth SoundFont")
+        } else {
+            self.settings.midi_out_port.clone()
+        };
+        let modal = egui::Modal::new(egui::Id::unique("split_modal"))
+            .frame(
+                egui::Frame::NONE
+                    .fill(Color32::from_gray(18))
+                    .stroke(egui::Stroke::new(1.0, Color32::from_gray(90)))
+                    .corner_radius(egui::CornerRadius::same(10))
+                    .inner_margin(egui::Margin::same(16)),
+            )
+            .show(ctx, |ui| {
+                ui.set_width(600.0);
+                ui.horizontal(|ui| {
+                    ui.label(RichText::new(tr("Split MIDI")).size(16.0).strong());
+                    ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                        if ui.button(tr("Close")).clicked() {
+                            close = true;
+                        }
+                    });
+                });
+                ui.add_space(10.0);
+                ui.horizontal_top(|ui| {
+                    ui.vertical(|ui| {
+                        ui.set_width(150.0);
+                        ui.label(RichText::new(tr("MIDI Channel")).size(13.0));
+                    });
+                    ui.add_space(8.0);
+                    let (divider, _) =
+                        ui.allocate_exact_size(egui::vec2(1.0, 420.0), egui::Sense::hover());
+                    ui.painter()
+                        .rect_filled(divider, 0.0, Color32::from_gray(70));
+                    ui.add_space(8.0);
+                    ui.vertical(|ui| {
+                        ui.set_width(400.0);
+                        if self.split_table(ui) {
+                            changed = true;
+                        }
+                        ui.add_space(8.0);
+                        ui.label(
+                            RichText::new(tr_args(
+                                "Default Port: {}",
+                                &[&default_port as &dyn std::fmt::Display],
+                            ))
+                            .size(11.0)
+                            .color(DIM),
+                        );
+                    });
+                });
+                ui.add_space(8.0);
+                ui.horizontal(|ui| {
+                    if ui.button(tr("Reset to defaults")).clicked() {
+                        reset = true;
+                    }
+                    if let Some(error) = &self.split_error {
+                        ui.label(RichText::new(error.clone()).size(10.5).color(ERROR));
+                    }
+                });
+            });
+        if reset {
+            for port in &mut self.settings.split_ports {
+                port.clear();
+            }
+            changed = true;
+        }
+        if changed {
+            match self.apply_midi_routing() {
+                Ok(()) => self.split_error = None,
+                Err(err) => self.split_error = Some(err),
+            }
+            self.save_settings();
+        }
+        if close || modal.should_close() {
+            self.split_open = false;
+            self.split_selection.clear();
+            self.split_drag_anchor = None;
+        }
+    }
+
+    /// The channel table: a click selects one row, a drag selects a range and
+    /// Ctrl+click adds or removes single rows.
+    fn split_table(&mut self, ui: &mut egui::Ui) -> bool {
+        let ports = self.midi_ports.clone();
+        let mut changed = false;
+        const WIDTH: f32 = 400.0;
+        const HEADER: f32 = 22.0;
+        const ROW: f32 = 20.0;
+        const CHANNEL_WIDTH: f32 = 60.0;
+        const ROWS: usize = 16;
+
+        let body = ROW * ROWS as f32;
+        let (rect, response) = ui.allocate_exact_size(
+            egui::vec2(WIDTH, HEADER + body),
+            egui::Sense::click_and_drag(),
+        );
+        let painter = ui.painter_at(rect);
+        let header = Rect::from_min_size(rect.min, egui::vec2(WIDTH, HEADER));
+        let rows_top = header.bottom();
+
+        let row_at = |y: f32| {
+            (y >= rows_top && y < rows_top + body)
+                .then(|| (((y - rows_top) / ROW).floor() as usize).min(ROWS - 1))
+        };
+        // The press frame still has the pointer where the button went down;
+        // the drag threshold would otherwise move the anchor one row along.
+        let toggle = ui.input(|i| i.modifiers.ctrl || i.modifiers.shift);
+        // Only the primary button selects; a right-click must keep the group.
+        let selecting = ui.input(|i| i.pointer.primary_down());
+        if selecting && response.is_pointer_button_down_on() {
+            match self.split_drag_anchor {
+                None => {
+                    if let Some(row) = response
+                        .interact_pointer_pos()
+                        .and_then(|pos| row_at(pos.y))
+                    {
+                        self.split_drag_anchor = Some(row);
+                        if toggle {
+                            if let Some(index) =
+                                self.split_selection.iter().position(|&ch| ch == row)
+                            {
+                                self.split_selection.remove(index);
+                            } else {
+                                self.split_selection.push(row);
+                            }
+                        } else {
+                            self.split_selection = vec![row];
+                        }
+                    }
+                }
+                Some(anchor) => {
+                    if !toggle
+                        && let Some(row) = response
+                            .interact_pointer_pos()
+                            .and_then(|pos| row_at(pos.y))
+                    {
+                        let (low, high) = if anchor <= row {
+                            (anchor, row)
+                        } else {
+                            (row, anchor)
+                        };
+                        self.split_selection = (low..=high).collect();
+                    }
+                }
+            }
+        } else {
+            self.split_drag_anchor = None;
+        }
+
+        if response.secondary_clicked()
+            && let Some(row) = response
+                .interact_pointer_pos()
+                .and_then(|pos| row_at(pos.y))
+            && !self.split_selection.contains(&row)
+        {
+            self.split_selection = vec![row];
+        }
+        let mut assign: Option<String> = None;
+        response.context_menu(|ui| {
+            ui.set_min_width(200.0);
+            if ui.button(tr("Default Port")).clicked() {
+                assign = Some(String::new());
+                ui.close();
+            }
+            if ui.button(tr("RustySynth SoundFont")).clicked() {
+                assign = Some(audio::INTERNAL_PORT.to_owned());
+                ui.close();
+            }
+            for port in &ports {
+                if ui.button(port).clicked() {
+                    assign = Some(port.clone());
+                    ui.close();
+                }
+            }
+        });
+        if let Some(port) = assign {
+            if self.settings.split_ports.len() < 16 {
+                self.settings.split_ports.resize(16, String::new());
+            }
+            for &channel in &self.split_selection {
+                self.settings.split_ports[channel] = port.clone();
+            }
+            changed = true;
+        }
+
+        let hover_row = response.hover_pos().and_then(|pos| row_at(pos.y));
+        let selected = |channel: usize| self.split_selection.contains(&channel);
+
+        // Header.
+        painter.rect_filled(header, 0.0, Color32::from_gray(34));
+        painter.rect_stroke(
+            header,
+            0.0,
+            egui::Stroke::new(1.0, Color32::from_gray(90)),
+            egui::StrokeKind::Inside,
+        );
+        for (label, left) in [(tr("Channel"), 0.0), (tr("MIDI Output"), CHANNEL_WIDTH)] {
+            painter
+                .with_clip_rect(Rect::from_min_size(
+                    Pos2::new(header.left() + left, header.top()),
+                    egui::vec2(
+                        if left == 0.0 {
+                            CHANNEL_WIDTH
+                        } else {
+                            WIDTH - CHANNEL_WIDTH
+                        },
+                        HEADER,
+                    ),
+                ))
+                .text(
+                    Pos2::new(header.left() + left + 6.0, header.center().y),
+                    egui::Align2::LEFT_CENTER,
+                    label,
+                    FontId::proportional(11.0),
+                    FG,
+                );
+        }
+
+        // Rows.
+        for channel in 0..ROWS {
+            let top = rows_top + ROW * channel as f32;
+            let row_rect = Rect::from_min_size(Pos2::new(rect.left(), top), egui::vec2(WIDTH, ROW));
+            let fill = if selected(channel) {
+                Color32::from_gray(58)
+            } else if hover_row == Some(channel) {
+                Color32::from_gray(30)
+            } else if channel % 2 == 0 {
+                Color32::from_gray(16)
+            } else {
+                Color32::from_gray(20)
+            };
+            painter.rect_filled(row_rect, 0.0, fill);
+
+            let port = self
+                .settings
+                .split_ports
+                .get(channel)
+                .cloned()
+                .unwrap_or_default();
+            let color = if selected(channel) {
+                FG
+            } else {
+                Color32::from_gray(190)
+            };
+            painter.text(
+                Pos2::new(row_rect.left() + 8.0, row_rect.center().y),
+                egui::Align2::LEFT_CENTER,
+                format!("{}", channel + 1),
+                FontId::proportional(11.5),
+                color,
+            );
+            painter
+                .with_clip_rect(Rect::from_min_size(
+                    Pos2::new(row_rect.left() + CHANNEL_WIDTH, top),
+                    egui::vec2(WIDTH - CHANNEL_WIDTH, ROW),
+                ))
+                .text(
+                    Pos2::new(row_rect.left() + CHANNEL_WIDTH + 6.0, row_rect.center().y),
+                    egui::Align2::LEFT_CENTER,
+                    self.split_port_label(&port),
+                    FontId::proportional(11.5),
+                    color,
+                );
+        }
+
+        // Grid lines.
+        let line = egui::Stroke::new(1.0, Color32::from_gray(70));
+        painter.line_segment([header.left_bottom(), header.right_bottom()], line);
+        painter.line_segment(
+            [
+                Pos2::new(header.left() + CHANNEL_WIDTH, header.top()),
+                Pos2::new(header.left() + CHANNEL_WIDTH, rows_top + body),
+            ],
+            line,
+        );
+        let border = egui::Stroke::new(1.0, Color32::from_gray(90));
+        painter.rect_stroke(
+            Rect::from_min_size(rect.min, egui::vec2(WIDTH, HEADER + body)),
+            0.0,
+            border,
+            egui::StrokeKind::Inside,
+        );
+
+        changed
+    }
+
+    /// How an empty output name is shown: it follows the default port.
+    fn split_port_label(&self, port: &str) -> String {
+        if port.is_empty() {
+            tr("Default Port")
+        } else if port.eq_ignore_ascii_case(audio::INTERNAL_PORT) {
+            tr("RustySynth SoundFont")
+        } else {
+            port.to_owned()
+        }
+    }
+
     /// The "General" settings page: display durations and top-bar visibility.
     fn general_page(&mut self, ui: &mut egui::Ui) -> bool {
         let mut changed = false;
@@ -2015,8 +3801,14 @@ impl KaraokeApp {
                 );
                 changed |=
                     seconds_row(ui, &tr("Playlist"), &mut self.settings.playlist_seconds, 60);
+                changed |= seconds_row(
+                    ui,
+                    &tr("Search Popup"),
+                    &mut self.settings.popup_seconds,
+                    60,
+                );
 
-                ui.add_space(40.0);
+                ui.add_space(16.0);
                 ui.label(RichText::new(tr("Language")).size(13.0));
                 ui.add_space(6.0);
                 let languages = i18n::available_languages();
@@ -2080,7 +3872,7 @@ impl KaraokeApp {
             ui.add_space(18.0);
             ui.vertical(|ui| {
                 ui.spacing_mut().item_spacing.x = 10.0;
-                ui.set_width(240.0);
+                ui.set_width(220.0);
                 ui.label(RichText::new(tr("Playlist")).size(13.0));
                 ui.add_space(6.0);
                 changed |= check_row(
@@ -2102,34 +3894,250 @@ impl KaraokeApp {
                     10,
                 );
             });
+
+            ui.add_space(4.0);
+            ui.vertical(|ui| {
+                ui.spacing_mut().item_spacing.x = 10.0;
+                ui.set_width(240.0);
+                ui.horizontal(|ui| {
+                    ui.add_sized(
+                        [116.0, 26.0],
+                        egui::Label::new(RichText::new(tr("Change Key")).size(13.0)),
+                    );
+                    ui.add_space(6.0);
+                    let mut mode = self.settings.transpose_mode;
+                    egui::ComboBox::from_id_salt("transpose_mode")
+                        .width(148.0)
+                        .selected_text(transpose_mode_name(mode))
+                        .truncate()
+                        .show_ui(ui, |ui| {
+                            for option in [
+                                TransposeMode::All,
+                                TransposeMode::Wolf,
+                                TransposeMode::Recovery,
+                            ] {
+                                ui.selectable_value(&mut mode, option, transpose_mode_name(option));
+                            }
+                        });
+                    if mode != self.settings.transpose_mode {
+                        self.settings.transpose_mode = mode;
+                        self.send_midi_options();
+                        changed = true;
+                    }
+                });
+                ui.add_space(2.0);
+                ui.horizontal(|ui| {
+                    ui.add_sized(
+                        [116.0, 26.0],
+                        egui::Label::new(RichText::new(tr("MIDI Reset System")).size(13.0)),
+                    );
+                    ui.add_space(6.0);
+                    let mut reset = self.settings.midi_reset;
+                    egui::ComboBox::from_id_salt("midi_reset")
+                        .width(148.0)
+                        .selected_text(midi_reset_name(reset))
+                        .truncate()
+                        .show_ui(ui, |ui| {
+                            for option in [
+                                MidiReset::Gm,
+                                MidiReset::Gs,
+                                MidiReset::Xg,
+                                MidiReset::Roland,
+                                MidiReset::SoundFont,
+                            ] {
+                                ui.selectable_value(&mut reset, option, midi_reset_name(option));
+                            }
+                        });
+                    if reset != self.settings.midi_reset {
+                        self.settings.midi_reset = reset;
+                        self.send_midi_options();
+                        changed = true;
+                    }
+                });
+            });
         });
 
         changed
     }
 
     /// The "Background" settings page: colour picker plus 4:3 / 16:9 previews.
+    /// Load the background image when the settings point at a new file.
+    fn sync_background_image(&mut self, ctx: &egui::Context) {
+        // The shipped artwork is decoded once, the first time it is needed.
+        if self.settings.background_style == BackgroundStyle::Default
+            && self.default_background.is_none()
+            && let Ok(image) = load_background_bytes(DEFAULT_BACKGROUND)
+        {
+            self.default_background =
+                Some(ctx.load_texture("default_background", image, egui::TextureOptions::LINEAR));
+        }
+        if self.settings.background_style != BackgroundStyle::Image {
+            return;
+        }
+        let Some(path) = self.settings.background_image.clone() else {
+            return;
+        };
+        if self
+            .background_texture
+            .as_ref()
+            .is_some_and(|(loaded, _)| loaded == &path)
+        {
+            return;
+        }
+        match load_background_image(&path) {
+            Ok(image) => {
+                self.background_texture = Some((
+                    path,
+                    ctx.load_texture("background_image", image, egui::TextureOptions::LINEAR),
+                ));
+                self.background_error = None;
+            }
+            Err(err) => {
+                self.background_texture = None;
+                self.background_error = Some(tr_args(
+                    "Could not load the background image: {}",
+                    &[&format!("{err:#}") as &dyn std::fmt::Display],
+                ));
+            }
+        }
+    }
+
     fn background_page(&mut self, ui: &mut egui::Ui) -> bool {
         let mut changed = false;
 
         ui.add_space(14.0);
 
+        let style = self.settings.background_style;
         ui.horizontal_top(|ui| {
             ui.spacing_mut().item_spacing.x = 0.0;
             ui.add_space(18.0);
+            // Left: the background type, then the colour or image controls.
             ui.vertical(|ui| {
                 ui.spacing_mut().item_spacing.x = 10.0;
-                ui.set_width(220.0);
-                ui.label(RichText::new(tr("Background Color")).size(13.0));
-                ui.add_space(6.0);
-                changed |= background_color_row(ui, &mut self.settings.background_color);
+                ui.set_width(240.0);
+                ui.horizontal(|ui| {
+                    // Left-aligned heading, level with the dropdown's box. The
+                    // text is painted so it can be nudged onto the box's centre
+                    // line: Thai upper vowels push the ink above the line box.
+                    ui.spacing_mut().item_spacing.x = 6.0;
+                    let (heading, _) =
+                        ui.allocate_exact_size(egui::vec2(70.0, 28.0), egui::Sense::hover());
+                    ui.painter().text(
+                        Pos2::new(heading.left(), heading.center().y + 4.0),
+                        egui::Align2::LEFT_CENTER,
+                        tr("Background"),
+                        FontId::proportional(13.0),
+                        FG,
+                    );
+                    let selected = match style {
+                        BackgroundStyle::Default => tr("Default"),
+                        BackgroundStyle::Color => tr("Color"),
+                        BackgroundStyle::Image => tr("Image"),
+                    };
+                    egui::ComboBox::from_id_salt("background_style")
+                        .width(150.0)
+                        .selected_text(selected)
+                        .show_ui(ui, |ui| {
+                            for option in [
+                                BackgroundStyle::Default,
+                                BackgroundStyle::Color,
+                                BackgroundStyle::Image,
+                            ] {
+                                let label = match option {
+                                    BackgroundStyle::Default => tr("Default"),
+                                    BackgroundStyle::Color => tr("Color"),
+                                    BackgroundStyle::Image => tr("Image"),
+                                };
+                                if ui
+                                    .selectable_value(
+                                        &mut self.settings.background_style,
+                                        option,
+                                        label,
+                                    )
+                                    .clicked()
+                                {
+                                    changed = true;
+                                }
+                            }
+                        });
+                });
+                ui.add_space(14.0);
+                if style == BackgroundStyle::Image {
+                    ui.label(RichText::new(tr("Background image")).size(13.0));
+                    ui.add_space(6.0);
+                    ui.horizontal(|ui| {
+                        if ui
+                            .add_sized([120.0, 24.0], egui::Button::new(tr("Choose image\u{2026}")))
+                            .clicked()
+                        {
+                            self.start_dialog(DialogKind::BackgroundImage);
+                        }
+                        if self.settings.background_image.is_some()
+                            && ui
+                                .add_sized([60.0, 24.0], egui::Button::new(tr("Remove")))
+                                .clicked()
+                        {
+                            self.settings.background_image = None;
+                            self.background_texture = None;
+                            self.background_error = None;
+                            changed = true;
+                        }
+                    });
+                    ui.add_space(4.0);
+                    let name = self
+                        .settings
+                        .background_image
+                        .as_deref()
+                        .map(|path| {
+                            path.file_name()
+                                .map(|name| name.to_string_lossy().into_owned())
+                                .unwrap_or_else(|| path.display().to_string())
+                        })
+                        .unwrap_or_else(|| tr("No image selected"));
+                    ui.label(RichText::new(name).size(11.0).color(DIM));
+                    if let Some(error) = &self.background_error {
+                        ui.label(RichText::new(error.clone()).size(10.5).color(ERROR));
+                    }
+                } else if style == BackgroundStyle::Color {
+                    ui.label(RichText::new(tr("Background Color")).size(13.0));
+                    ui.add_space(6.0);
+                    changed |= background_color_row(ui, &mut self.settings.background_color);
+                } else {
+                    ui.label(RichText::new(tr("Background image")).size(13.0));
+                    ui.add_space(6.0);
+                    if ui
+                        .add_sized([120.0, 24.0], egui::Button::new(tr("Choose image\u{2026}")))
+                        .clicked()
+                    {
+                        self.start_dialog(DialogKind::BackgroundImage);
+                    }
+                    ui.add_space(4.0);
+                    ui.label(
+                        RichText::new(tr("Shipped with the player"))
+                            .size(11.0)
+                            .color(DIM),
+                    );
+                }
             });
-            ui.add_space(24.0);
+            ui.add_space(8.0);
+            // Right: the monitors sit at the top, beside the dropdown.
             ui.vertical(|ui| {
                 ui.spacing_mut().item_spacing.x = 10.0;
                 ui.set_width(268.0);
                 ui.label(RichText::new(tr("Preview monitor")).size(13.0));
                 ui.add_space(6.0);
-                background_preview(ui, color_or(&self.settings.background_color, [0, 0, 0]));
+                let texture = match style {
+                    BackgroundStyle::Default => self.default_background.as_ref(),
+                    BackgroundStyle::Image => {
+                        self.background_texture.as_ref().map(|(_, texture)| texture)
+                    }
+                    BackgroundStyle::Color => None,
+                };
+                background_preview(
+                    ui,
+                    color_or(&self.settings.background_color, [0, 0, 0]),
+                    texture,
+                );
             });
             ui.add_space(24.0);
         });
@@ -2137,8 +4145,1454 @@ impl KaraokeApp {
         changed
     }
 
-    /// The About page: logo, version, composer, tools, GitHub link and two
-    /// popups for the licence and credits.
+    fn start_missing_check(&mut self) {
+        if self.missing_checked || self.missing_check.is_some() {
+            return;
+        }
+        self.missing_checked = true;
+        let (sender, receiver) = std::sync::mpsc::channel();
+        self.missing_check = Some(receiver);
+        std::thread::spawn(move || {
+            let result = Library::open_default()
+                .and_then(|mut library| library.mark_missing_files())
+                .map_err(|err| format!("{err:#}"));
+            let _ = sender.send(result);
+        });
+    }
+
+    /// Run a database maintenance action off the UI thread.
+    ///
+    /// Checking 24k files takes a moment and VACUUM takes even longer on a
+    /// large library, so the window must stay responsive while they run.
+    fn start_library_op(&mut self, op: LibraryOp) {
+        if self.library_op.is_some() {
+            return;
+        }
+        self.library_note = None;
+        self.library_error = None;
+        let (sender, receiver) = std::sync::mpsc::channel();
+        self.library_op = Some((op, receiver));
+        std::thread::spawn(move || {
+            let result = match op {
+                LibraryOp::CheckMissing => Library::open_default()
+                    .and_then(|mut library| library.mark_missing_files())
+                    .map(|(missing, restored)| LibraryOpResult::Missing { missing, restored }),
+                LibraryOp::Compact => Library::open_default()
+                    .and_then(|mut library| library.compact())
+                    .map(|(before, after)| LibraryOpResult::Compact { before, after }),
+            }
+            .map_err(|err| format!("{err:#}"));
+            let _ = sender.send(result);
+        });
+    }
+
+    fn poll_library_op(&mut self) {
+        let Some((_, receiver)) = self.library_op.as_ref() else {
+            return;
+        };
+        match receiver.try_recv() {
+            Ok(Ok(result)) => {
+                self.library_op = None;
+                self.library_note = Some(match result {
+                    LibraryOpResult::Missing { missing, restored } => tr_args(
+                        "{} missing · {} restored",
+                        &[&missing as &dyn std::fmt::Display, &restored],
+                    ),
+                    LibraryOpResult::Compact { before, after } => tr_args(
+                        "Database {} → {}",
+                        &[
+                            &format_bytes(before) as &dyn std::fmt::Display,
+                            &format_bytes(after),
+                        ],
+                    ),
+                });
+                self.reload_library();
+            }
+            Ok(Err(err)) => {
+                self.library_op = None;
+                self.library_error = Some(err);
+            }
+            Err(TryRecvError::Empty) => {}
+            Err(TryRecvError::Disconnected) => self.library_op = None,
+        }
+    }
+
+    fn poll_missing_check(&mut self) {
+        let Some(receiver) = self.missing_check.as_ref() else {
+            return;
+        };
+        match receiver.try_recv() {
+            Ok(Ok((0, 0))) => self.missing_check = None,
+            Ok(Ok((missing, restored))) => {
+                self.missing_check = None;
+                self.library_note =
+                    Some(tr_args("{} missing · {} restored", &[&missing, &restored]));
+                self.reload_library();
+            }
+            Ok(Err(err)) => {
+                self.missing_check = None;
+                self.library_error = Some(err);
+            }
+            Err(TryRecvError::Empty) => {}
+            Err(TryRecvError::Disconnected) => self.missing_check = None,
+        }
+    }
+
+    /// Load the browse list in the background. A 100k-song library takes about
+    /// half a second, which is too long to block a frame.
+    fn start_library_load(&mut self) {
+        let (sender, receiver) = std::sync::mpsc::channel();
+        self.library_load = Some(receiver);
+        std::thread::spawn(move || {
+            let result = Library::open_default()
+                .and_then(|library| library.songs())
+                .map_err(|err| format!("{err:#}"));
+            let _ = sender.send(result);
+        });
+    }
+
+    fn poll_library_load(&mut self) {
+        let Some(receiver) = self.library_load.as_ref() else {
+            return;
+        };
+        match receiver.try_recv() {
+            Ok(Ok(songs)) => {
+                self.library_load = None;
+                self.library_songs = songs;
+                self.rebuild_library_meta();
+                self.rebuild_library_view();
+            }
+            Ok(Err(err)) => {
+                self.library_load = None;
+                self.library_error = Some(err);
+            }
+            Err(TryRecvError::Empty) => {}
+            Err(TryRecvError::Disconnected) => self.library_load = None,
+        }
+    }
+
+    fn open_library(&mut self) {
+        self.library_open = true;
+        self.library_error = None;
+        self.library_search_focus = true;
+        // Surface a damaged database here instead of failing silently later.
+        if let Ok(library) = Library::open_default()
+            && let Ok(Some(problem)) = library.quick_check()
+        {
+            self.library_error = Some(format!("{}: {problem}", tr("Database check failed")));
+        }
+        self.reload_library();
+    }
+
+    fn reload_library(&mut self) {
+        self.start_library_load();
+    }
+
+    fn rebuild_library_view(&mut self) {
+        let format = self.library_filter.format();
+        let matches_format = |song: &SongRecord| format.is_none_or(|format| song.format == format);
+        let query = self.library_query.trim().to_lowercase();
+        if query.is_empty() {
+            self.library_view = self
+                .library_songs
+                .iter()
+                .enumerate()
+                .filter(|(_, song)| matches_format(song))
+                .map(|(index, _)| index)
+                .collect();
+            return;
+        }
+        if self.library_keys.len() != self.library_songs.len() {
+            self.rebuild_library_meta();
+        }
+        // The lowercased text is prepared once per load, so typing does not
+        // allocate four strings per song on every keystroke.
+        let boundary = format!("\n{query}");
+        let mut scored: Vec<(i32, usize)> = self
+            .library_keys
+            .iter()
+            .enumerate()
+            .filter(|(index, _)| matches_format(&self.library_songs[*index]))
+            .filter_map(|(index, key)| {
+                let score = if *key == query {
+                    1000
+                } else if key.starts_with(&query) || key.contains(&boundary) {
+                    800
+                } else if key.contains(&query) {
+                    500
+                } else {
+                    0
+                };
+                (score > 0).then_some((score, index))
+            })
+            .collect();
+        scored.sort_by(|a, b| b.0.cmp(&a.0).then_with(|| a.1.cmp(&b.1)));
+        self.library_view = scored.into_iter().map(|(_, index)| index).collect();
+    }
+
+    fn start_library_scan(&mut self) {
+        if self.library_scan.is_some() {
+            return;
+        }
+        let filter = self.library_filter;
+        // When the user configured at least one folder, scan exactly those.
+        // The built-in defaults are only used on a fresh install, otherwise a
+        // folder the user cleared would silently come back.
+        let any_configured = self.settings.ncn_folder.is_some()
+            || self.settings.kmid_folder.is_some()
+            || self.settings.kar_folder.is_some();
+        let mut folders: Vec<(String, PathBuf)> = Vec::new();
+        let mut add = |name: &str, configured: Option<&Path>| {
+            let path = if any_configured {
+                configured.map(Path::to_path_buf)
+            } else {
+                effective_song_folder(configured, name)
+            };
+            if let Some(path) = path {
+                folders.push((name.to_ascii_lowercase(), path));
+            }
+        };
+        if matches!(filter, LibraryFilter::All | LibraryFilter::Ncn) {
+            add("NCN", self.settings.ncn_folder.as_deref());
+        }
+        if matches!(filter, LibraryFilter::All | LibraryFilter::Kmid) {
+            add("KMID", self.settings.kmid_folder.as_deref());
+        }
+        if matches!(filter, LibraryFilter::All | LibraryFilter::Kar) {
+            add("KAR", self.settings.kar_folder.as_deref());
+        }
+
+        if folders.is_empty() {
+            self.library_error = Some(tr("Choose at least one folder first"));
+            return;
+        }
+
+        let (sender, receiver) = std::sync::mpsc::channel();
+        self.library_scan = Some(LibraryScan {
+            receiver,
+            filter,
+            progress: 0.0,
+            done: 0,
+            total: 0,
+        });
+        self.library_progress = 0.0;
+        self.library_error = None;
+        self.library_note = None;
+        std::thread::spawn(move || {
+            // Read the stored rows inside the worker: cloning a 100k-song list
+            // on the UI thread would stall the frame.
+            let existing = Library::open_default()
+                .and_then(|library| library.songs())
+                .unwrap_or_default();
+            let outcome = {
+                let report = |done, total| {
+                    let _ = sender.send(LibraryScanMessage::Progress(done, total));
+                };
+                library::scan_folders(&folders, &existing, &report)
+            };
+            let _ = sender.send(LibraryScanMessage::Done(outcome));
+        });
+    }
+
+    fn poll_library_scan(&mut self) {
+        let mut finished = None;
+        let mut disconnected = false;
+        if let Some(scan) = self.library_scan.as_mut() {
+            loop {
+                match scan.receiver.try_recv() {
+                    Ok(LibraryScanMessage::Progress(done, total)) => {
+                        scan.done = done;
+                        scan.total = total;
+                        let value = if total > 0 {
+                            done as f32 / total as f32
+                        } else {
+                            0.0
+                        };
+                        scan.progress = scan.progress.max(value);
+                    }
+                    Ok(LibraryScanMessage::Done(outcome)) => {
+                        finished = Some(outcome);
+                        break;
+                    }
+                    Err(TryRecvError::Empty) => break,
+                    Err(TryRecvError::Disconnected) => {
+                        disconnected = true;
+                        break;
+                    }
+                }
+            }
+        }
+        if let Some(progress) = self.library_scan.as_ref().map(|scan| scan.progress) {
+            self.library_progress = progress;
+        }
+        if disconnected {
+            self.library_scan = None;
+            self.library_error = Some(tr("The database scan stopped unexpectedly"));
+        }
+        let Some(outcome) = finished else {
+            return;
+        };
+        let filter = self
+            .library_scan
+            .as_ref()
+            .map(|scan| scan.filter)
+            .unwrap_or(LibraryFilter::All);
+        self.library_scan = None;
+        self.library_progress = 1.0;
+        let mut songs = outcome.songs;
+        if let Some(format) = filter.format() {
+            songs.retain(|song| song.format == format);
+        }
+        let summary = tr_args(
+            "{} songs · {} unchanged · {} duplicates · {} skipped",
+            &[
+                &songs.len(),
+                &outcome.unchanged,
+                &outcome.duplicates,
+                &outcome.skipped,
+            ],
+        );
+        match Library::open_default().and_then(|mut library| library.rebuild_scan(&songs)) {
+            Ok(()) => {
+                self.start_library_load();
+                self.library_note = Some(summary);
+            }
+            Err(err) => self.library_error = Some(format!("{err:#}")),
+        }
+    }
+
+    // ------------------------------------------------------------ add songs
+
+    fn start_import_scan(&mut self, folder: PathBuf) {
+        if self.import_scan.is_some() || self.import_add.is_some() {
+            return;
+        }
+        self.import_open = true;
+        self.import_source = Some(folder.clone());
+        self.import_items.clear();
+        self.import_view.clear();
+        self.import_progress = 0.0;
+        self.import_note = None;
+        self.import_error = None;
+        let (sender, receiver) = std::sync::mpsc::channel();
+        self.import_scan = Some(ImportScan {
+            receiver,
+            progress: 0.0,
+        });
+        std::thread::spawn(move || {
+            let folders = vec![("all".to_owned(), folder)];
+            let outcome = {
+                let report = |done, total| {
+                    let _ = sender.send(LibraryScanMessage::Progress(done, total));
+                };
+                library::scan_folders(&folders, &[], &report)
+            };
+            let _ = sender.send(LibraryScanMessage::Done(outcome));
+        });
+    }
+
+    fn rebuild_import_view(&mut self) {
+        let format = self.import_filter.format();
+        self.import_view = self
+            .import_items
+            .iter()
+            .enumerate()
+            .filter(|(_, item)| format.map_or(true, |format| item.record.format == format))
+            .map(|(index, _)| index)
+            .collect();
+    }
+
+    fn poll_import(&mut self) {
+        let mut scan_done = None;
+        let mut scan_disconnected = false;
+        if let Some(scan) = self.import_scan.as_mut() {
+            loop {
+                match scan.receiver.try_recv() {
+                    Ok(LibraryScanMessage::Progress(done, total)) => {
+                        let value = if total > 0 {
+                            done as f32 / total as f32
+                        } else {
+                            0.0
+                        };
+                        scan.progress = scan.progress.max(value);
+                    }
+                    Ok(LibraryScanMessage::Done(outcome)) => {
+                        scan_done = Some(outcome);
+                        break;
+                    }
+                    Err(TryRecvError::Empty) => break,
+                    Err(TryRecvError::Disconnected) => {
+                        scan_disconnected = true;
+                        break;
+                    }
+                }
+            }
+        }
+        if let Some(progress) = self.import_scan.as_ref().map(|scan| scan.progress) {
+            self.import_progress = self.import_progress.max(progress);
+        }
+        if scan_disconnected {
+            self.import_scan = None;
+            self.import_error = Some(tr("The folder scan stopped unexpectedly"));
+        }
+        if let Some(outcome) = scan_done {
+            self.import_scan = None;
+            self.import_progress = 1.0;
+            self.import_items = outcome
+                .songs
+                .into_iter()
+                .map(|record| ImportItem {
+                    record,
+                    selected: true,
+                })
+                .collect();
+            self.rebuild_import_view();
+            self.import_note = Some(tr_args("Found {} songs", &[&self.import_items.len()]));
+        }
+
+        let mut add_done = None;
+        let mut add_disconnected = false;
+        if let Some(add) = self.import_add.as_mut() {
+            loop {
+                match add.receiver.try_recv() {
+                    Ok(ImportAddMessage::Progress(done, total)) => {
+                        let value = if total > 0 {
+                            done as f32 / total as f32
+                        } else {
+                            0.0
+                        };
+                        add.progress = add.progress.max(value);
+                    }
+                    Ok(ImportAddMessage::Done(outcome)) => {
+                        add_done = Some(outcome);
+                        break;
+                    }
+                    Err(TryRecvError::Empty) => break,
+                    Err(TryRecvError::Disconnected) => {
+                        add_disconnected = true;
+                        break;
+                    }
+                }
+            }
+        }
+        if let Some(progress) = self.import_add.as_ref().map(|add| add.progress) {
+            self.import_progress = self.import_progress.max(progress);
+        }
+        if add_disconnected {
+            self.import_add = None;
+            self.import_error = Some(tr("The import stopped unexpectedly"));
+        }
+        if let Some(outcome) = add_done {
+            self.import_add = None;
+            self.import_progress = 1.0;
+            let mut added_records = Vec::new();
+            let mut created_files = Vec::new();
+            let mut added_sources = HashSet::new();
+            for (source, record, files) in &outcome.added {
+                added_sources.insert(source.clone());
+                added_records.push(record.clone());
+                created_files.extend(files.iter().cloned());
+            }
+            let added_count = added_records.len();
+            if added_records.is_empty() {
+                self.import_note = Some(tr_args(
+                    "Added {} songs ({} skipped)",
+                    &[&0usize, &outcome.skipped],
+                ));
+            } else {
+                match Library::open_default()
+                    .and_then(|mut library| library.insert_records(&added_records))
+                {
+                    Ok(()) => {
+                        self.start_library_load();
+                        self.import_items
+                            .retain(|item| !added_sources.contains(&item.record.path));
+                        self.rebuild_import_view();
+                        self.import_note = Some(tr_args(
+                            "Added {} songs ({} skipped)",
+                            &[&added_count, &outcome.skipped],
+                        ));
+                    }
+                    Err(err) => {
+                        // The rows never reached the library, so drop the files
+                        // this import copied instead of leaving them orphaned.
+                        for path in &created_files {
+                            let _ = std::fs::remove_file(path);
+                        }
+                        self.import_error = Some(format!("{err:#}"));
+                    }
+                }
+            }
+        }
+    }
+
+    fn start_import_add(&mut self) {
+        if self.import_scan.is_some() || self.import_add.is_some() {
+            return;
+        }
+        let selected: Vec<SongRecord> = self
+            .import_view
+            .iter()
+            .filter_map(|&index| {
+                self.import_items
+                    .get(index)
+                    .filter(|item| item.selected)
+                    .map(|item| item.record.clone())
+            })
+            .collect();
+        if selected.is_empty() {
+            self.import_note = Some(tr("Select at least one song"));
+            return;
+        }
+
+        let existing: HashSet<(String, String)> = self
+            .library_songs
+            .iter()
+            .map(|song| (song.code.clone(), song.format.clone()))
+            .collect();
+        let mut skipped = 0usize;
+        let mut work = Vec::new();
+        for record in selected {
+            if existing.contains(&(record.code.clone(), record.format.clone())) {
+                skipped += 1;
+                continue;
+            }
+            let destination = match record.format.as_str() {
+                "ncn" => effective_song_folder(self.settings.ncn_folder.as_deref(), "NCN"),
+                "kmid" => effective_song_folder(self.settings.kmid_folder.as_deref(), "KMID"),
+                "kar" => effective_song_folder(self.settings.kar_folder.as_deref(), "KAR"),
+                _ => None,
+            };
+            match destination {
+                Some(destination) => work.push((record, destination)),
+                None => skipped += 1,
+            }
+        }
+        if work.is_empty() {
+            self.import_note = Some(tr_args("Added {} songs ({} skipped)", &[&0usize, &skipped]));
+            return;
+        }
+
+        let total = work.len();
+        let (sender, receiver) = std::sync::mpsc::channel();
+        self.import_add = Some(ImportAdd {
+            receiver,
+            progress: 0.0,
+        });
+        self.import_progress = 0.0;
+        self.import_error = None;
+        self.import_note = None;
+        std::thread::spawn(move || {
+            let mut added = Vec::new();
+            for (index, (record, destination)) in work.into_iter().enumerate() {
+                match import_copy(&record, &destination) {
+                    Ok((copied, files)) => added.push((record.path.clone(), copied, files)),
+                    Err(_) => skipped += 1,
+                }
+                let _ = sender.send(ImportAddMessage::Progress(index + 1, total));
+            }
+            let _ = sender.send(ImportAddMessage::Done(ImportAddOutcome { added, skipped }));
+        });
+    }
+
+    fn import_modal(&mut self, ctx: &egui::Context) {
+        if !self.import_open {
+            return;
+        }
+        self.poll_import();
+        let busy = self.import_scan.is_some() || self.import_add.is_some();
+        if busy {
+            ctx.request_repaint();
+        }
+
+        let mut close = false;
+        let mut open = false;
+        let mut add = false;
+        let modal = egui::Modal::new(egui::Id::unique("import_modal"))
+            .backdrop_color(Color32::from_black_alpha(180))
+            .frame(
+                egui::Frame::NONE
+                    .fill(Color32::from_rgb(8, 8, 8))
+                    .stroke(egui::Stroke::new(1.5, Color32::from_gray(120)))
+                    .corner_radius(egui::CornerRadius::same(12))
+                    .inner_margin(egui::Margin::symmetric(14, 12)),
+            )
+            .show(ctx, |ui| {
+                ui.set_width(640.0);
+                ui.horizontal(|ui| {
+                    if ui
+                        .add_enabled(!busy, egui::Button::new(tr("Open")))
+                        .clicked()
+                    {
+                        open = true;
+                    }
+                    let selected_visible = self
+                        .import_view
+                        .iter()
+                        .filter(|&&index| self.import_items[index].selected)
+                        .count();
+                    if ui
+                        .add_enabled(!busy && selected_visible > 0, egui::Button::new(tr("Add")))
+                        .clicked()
+                    {
+                        add = true;
+                    }
+
+                    let all_selected = !self.import_view.is_empty()
+                        && self
+                            .import_view
+                            .iter()
+                            .all(|&index| self.import_items[index].selected);
+                    let mut select_all = all_selected;
+                    if ui
+                        .add_enabled(
+                            !busy && !self.import_view.is_empty(),
+                            egui::Checkbox::new(&mut select_all, tr("Select all")),
+                        )
+                        .changed()
+                    {
+                        for &index in &self.import_view {
+                            self.import_items[index].selected = select_all;
+                        }
+                    }
+
+                    ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                        let before = self.import_filter;
+                        ui.add_enabled_ui(!busy, |ui| {
+                            egui::ComboBox::from_id_salt("import_filter")
+                                .width(110.0)
+                                .selected_text(self.import_filter.label())
+                                .show_ui(ui, |ui| {
+                                    for filter in [
+                                        LibraryFilter::All,
+                                        LibraryFilter::Ncn,
+                                        LibraryFilter::Kmid,
+                                        LibraryFilter::Kar,
+                                    ] {
+                                        ui.selectable_value(
+                                            &mut self.import_filter,
+                                            filter,
+                                            filter.label(),
+                                        );
+                                    }
+                                });
+                        });
+                        if self.import_filter != before {
+                            self.rebuild_import_view();
+                        }
+                        ui.label(tr("File type"));
+                    });
+                });
+                ui.add_space(6.0);
+                self.import_list(ui, busy);
+                ui.add_space(6.0);
+                ui.horizontal(|ui| {
+                    let progress = self.import_progress.clamp(0.0, 1.0);
+                    let (bar_rect, _) =
+                        ui.allocate_exact_size(egui::vec2(300.0, 20.0), egui::Sense::hover());
+                    let painter = ui.painter_at(bar_rect);
+                    painter.rect_filled(bar_rect, 6.0, Color32::from_gray(30));
+                    if progress > 0.0 {
+                        let fill_rect = Rect::from_min_size(
+                            bar_rect.min,
+                            egui::vec2(bar_rect.width() * progress, bar_rect.height()),
+                        );
+                        painter.rect_filled(fill_rect, 6.0, Color32::from_gray(90));
+                    }
+                    painter.text(
+                        bar_rect.center(),
+                        egui::Align2::CENTER_CENTER,
+                        format!("{:.0}%", progress * 100.0),
+                        FontId::proportional(12.0),
+                        FG,
+                    );
+                    if let Some(error) = &self.import_error {
+                        ui.label(RichText::new(error).size(10.5).color(ERROR));
+                    } else if let Some(note) = &self.import_note {
+                        ui.label(RichText::new(note).size(10.5).color(DIM));
+                    }
+                    ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                        if ui
+                            .add_enabled(!busy, egui::Button::new(tr("Close")))
+                            .clicked()
+                        {
+                            close = true;
+                        }
+                    });
+                });
+            });
+
+        if open {
+            self.start_dialog(DialogKind::ImportFolder);
+        }
+        if add {
+            self.start_import_add();
+        }
+        if close || (modal.should_close() && !busy) {
+            self.import_open = false;
+            self.import_scan = None;
+            self.import_add = None;
+        }
+    }
+
+    fn import_list(&mut self, ui: &mut egui::Ui, busy: bool) {
+        let width = ui.available_width();
+        let row_height = 24.0f32;
+        if self.import_view.is_empty() {
+            let (empty, _) = ui.allocate_exact_size(egui::vec2(width, 210.0), egui::Sense::hover());
+            let painter = ui.painter_at(empty);
+            painter.rect_filled(empty, 0.0, Color32::from_gray(14));
+            painter.rect_stroke(
+                empty,
+                0.0,
+                egui::Stroke::new(1.0, Color32::from_gray(90)),
+                egui::StrokeKind::Inside,
+            );
+            let message = if self.import_items.is_empty() {
+                tr("Open a folder to add songs.")
+            } else {
+                tr("No songs match the filter.")
+            };
+            painter.text(
+                empty.center(),
+                egui::Align2::CENTER_CENTER,
+                message,
+                FontId::proportional(12.0),
+                DIM,
+            );
+            return;
+        }
+
+        egui::Frame::NONE
+            .fill(Color32::from_gray(14))
+            .stroke(egui::Stroke::new(1.0, Color32::from_gray(90)))
+            .show(ui, |ui| {
+                ui.set_min_height(210.0);
+                ui.set_width(width);
+                ui.spacing_mut().item_spacing.y = 0.0;
+                egui::ScrollArea::vertical()
+                    .max_height(210.0)
+                    .auto_shrink([false, false])
+                    .show_rows(ui, row_height, self.import_view.len(), |ui, range| {
+                        let left = ui.max_rect().left();
+                        let top = ui.max_rect().top();
+                        let width = ui.available_width();
+                        for (offset, view_index) in range.clone().enumerate() {
+                            let item_index = self.import_view[view_index];
+                            let row = Rect::from_min_size(
+                                Pos2::new(left, top + offset as f32 * row_height),
+                                egui::vec2(width, row_height),
+                            );
+                            let painter = ui.painter_at(row);
+                            let fill = if view_index % 2 == 0 {
+                                Color32::from_gray(14)
+                            } else {
+                                Color32::from_gray(11)
+                            };
+                            painter.rect_filled(row, 0.0, fill);
+                            painter.line_segment(
+                                [
+                                    Pos2::new(row.left(), row.bottom()),
+                                    Pos2::new(row.right(), row.bottom()),
+                                ],
+                                egui::Stroke::new(1.0, Color32::from_gray(40)),
+                            );
+
+                            let checkbox = Rect::from_center_size(
+                                Pos2::new(row.left() + 16.0, row.center().y),
+                                egui::vec2(16.0, 16.0),
+                            );
+                            let response = ui.interact(
+                                checkbox,
+                                ui.scope_id().with(("import_select", item_index)),
+                                egui::Sense::click(),
+                            );
+                            let selected = self.import_items[item_index].selected;
+                            if response.clicked() && !busy {
+                                self.import_items[item_index].selected = !selected;
+                            }
+                            painter.rect_filled(checkbox, 3.0, Color32::from_gray(28));
+                            painter.rect_stroke(
+                                checkbox,
+                                3.0,
+                                egui::Stroke::new(1.0, Color32::from_gray(110)),
+                                egui::StrokeKind::Inside,
+                            );
+                            if selected {
+                                painter.line_segment(
+                                    [
+                                        Pos2::new(checkbox.left() + 3.0, checkbox.center().y),
+                                        Pos2::new(
+                                            checkbox.center().x - 1.0,
+                                            checkbox.bottom() - 4.0,
+                                        ),
+                                    ],
+                                    egui::Stroke::new(2.0, FG),
+                                );
+                                painter.line_segment(
+                                    [
+                                        Pos2::new(
+                                            checkbox.center().x - 1.0,
+                                            checkbox.bottom() - 4.0,
+                                        ),
+                                        Pos2::new(checkbox.right() - 3.0, checkbox.top() + 4.0),
+                                    ],
+                                    egui::Stroke::new(2.0, FG),
+                                );
+                            }
+
+                            let item = &self.import_items[item_index];
+                            let key = item.record.key.as_deref().unwrap_or("C");
+                            let text = format!(
+                                "{} : {} {} ({}) {}",
+                                view_index + 1,
+                                item.record.code,
+                                item.record.title,
+                                key,
+                                item.record.artist
+                            );
+                            painter
+                                .with_clip_rect(Rect::from_min_max(
+                                    Pos2::new(row.left() + 30.0, row.top()),
+                                    Pos2::new(row.right() - 4.0, row.bottom()),
+                                ))
+                                .text(
+                                    Pos2::new(row.left() + 30.0, row.center().y),
+                                    egui::Align2::LEFT_CENTER,
+                                    text,
+                                    FontId::proportional(11.5),
+                                    FG,
+                                );
+                        }
+                    });
+            });
+    }
+
+    fn library_modal(&mut self, ctx: &egui::Context) {
+        if !self.library_open {
+            return;
+        }
+        self.poll_library_scan();
+        if self.library_scan.is_some() {
+            ctx.request_repaint();
+        }
+
+        let mut close = false;
+        let mut create = false;
+        let mut check_missing = false;
+        let mut compact = false;
+        let mut backup = false;
+        let scanning = self.library_scan.is_some();
+        let busy = scanning || self.library_op.is_some();
+        let modal = egui::Modal::new(egui::Id::unique("library_modal"))
+            .backdrop_color(Color32::from_black_alpha(180))
+            .frame(
+                egui::Frame::NONE
+                    .fill(Color32::from_rgb(8, 8, 8))
+                    .stroke(egui::Stroke::new(1.5, Color32::from_gray(120)))
+                    .corner_radius(egui::CornerRadius::same(16))
+                    .inner_margin(egui::Margin::symmetric(20, 18)),
+            )
+            .show(ctx, |ui| {
+                ui.set_width(640.0);
+                // The search sits above the buttons, inset from the frame.
+                ui.horizontal(|ui| {
+                    let width = ui.available_width();
+                    let response = ui.add_sized(
+                        [width, 24.0],
+                        egui::TextEdit::singleline(&mut self.library_query)
+                            .id_salt("library_query_input")
+                            .hint_text(tr("Code, song or artist"))
+                            .font(FontId::proportional(13.0)),
+                    );
+                    if self.library_search_focus {
+                        response.request_focus();
+                        self.library_search_focus = false;
+                    }
+                    if response.changed() {
+                        self.rebuild_library_view();
+                    }
+                });
+                ui.add_space(6.0);
+                ui.horizontal(|ui| {
+                    if ui
+                        .add_enabled(!busy, egui::Button::new(tr("Add a song")))
+                        .clicked()
+                    {
+                        self.import_open = true;
+                        self.import_source = None;
+                        self.import_items.clear();
+                        self.import_view.clear();
+                        self.import_filter = LibraryFilter::All;
+                        self.import_scan = None;
+                        self.import_add = None;
+                        self.import_progress = 0.0;
+                        self.import_note = None;
+                        self.import_error = None;
+                    }
+                    if ui
+                        .add_enabled(!busy, egui::Button::new(tr("Check missing")))
+                        .on_hover_text(tr("Check missing files"))
+                        .clicked()
+                    {
+                        check_missing = true;
+                    }
+                    if ui
+                        .add_enabled(!busy, egui::Button::new(tr("Compact")))
+                        .on_hover_text(tr("Rebuild the database file and reclaim space"))
+                        .clicked()
+                    {
+                        compact = true;
+                    }
+                    ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                        if ui
+                            .add_enabled(!busy, egui::Button::new(tr("Create a database")))
+                            .clicked()
+                        {
+                            create = true;
+                        }
+                        let filter_before = self.library_filter;
+                        ui.add_enabled_ui(!busy, |ui| {
+                            egui::ComboBox::from_id_salt("library_filter")
+                                .width(110.0)
+                                .selected_text(self.library_filter.label())
+                                .show_ui(ui, |ui| {
+                                    for filter in [
+                                        LibraryFilter::All,
+                                        LibraryFilter::Ncn,
+                                        LibraryFilter::Kmid,
+                                        LibraryFilter::Kar,
+                                    ] {
+                                        ui.selectable_value(
+                                            &mut self.library_filter,
+                                            filter,
+                                            filter.label(),
+                                        );
+                                    }
+                                });
+                        });
+                        if self.library_filter != filter_before {
+                            self.rebuild_library_view();
+                        }
+                        ui.label(tr("File type"));
+                    });
+                });
+                ui.add_space(6.0);
+                self.library_table(ui);
+                ui.add_space(6.0);
+                ui.horizontal(|ui| {
+                    if ui
+                        .add_enabled(!busy, egui::Button::new(tr("Backup")))
+                        .on_hover_text(tr("Save a copy of the database to the backups folder"))
+                        .clicked()
+                    {
+                        backup = true;
+                    }
+                    let progress = self.library_progress.clamp(0.0, 1.0);
+                    let (bar_rect, _) =
+                        ui.allocate_exact_size(egui::vec2(300.0, 20.0), egui::Sense::hover());
+                    let painter = ui.painter_at(bar_rect);
+                    painter.rect_filled(bar_rect, 6.0, Color32::from_gray(30));
+                    if progress > 0.0 {
+                        let fill_rect = Rect::from_min_size(
+                            bar_rect.min,
+                            egui::vec2(bar_rect.width() * progress, bar_rect.height()),
+                        );
+                        painter.rect_filled(fill_rect, 6.0, Color32::from_gray(90));
+                    }
+                    painter.text(
+                        bar_rect.center(),
+                        egui::Align2::CENTER_CENTER,
+                        format!("{:.0}%", progress * 100.0),
+                        FontId::proportional(12.0),
+                        FG,
+                    );
+                    if let Some(error) = &self.library_error {
+                        ui.label(RichText::new(error).size(10.5).color(ERROR));
+                    } else if let Some((op, _)) = &self.library_op {
+                        ui.label(RichText::new(op.busy_label()).size(10.5).color(DIM));
+                    } else if let Some(note) = &self.library_note {
+                        ui.label(RichText::new(note).size(10.5).color(DIM));
+                    }
+                    ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                        if ui
+                            .add_enabled(!busy, egui::Button::new(tr("Close")))
+                            .clicked()
+                        {
+                            close = true;
+                        }
+                    });
+                });
+            });
+
+        if create {
+            self.start_library_scan();
+        }
+        if check_missing {
+            self.start_library_op(LibraryOp::CheckMissing);
+        }
+        if compact {
+            self.start_library_op(LibraryOp::Compact);
+        }
+        if backup {
+            match backup_library() {
+                Ok((_, size)) => {
+                    self.library_note = Some(tr_args("Backup saved ({})", &[&format_bytes(size)]));
+                }
+                Err(err) => self.library_error = Some(format!("{err:#}")),
+            }
+        }
+        if close || (modal.should_close() && !busy && !self.import_open) {
+            self.library_open = false;
+            self.import_open = false;
+            self.import_scan = None;
+            self.import_add = None;
+            self.library_scan = None;
+        }
+    }
+
+    fn library_table(&self, ui: &mut egui::Ui) {
+        let width = ui.available_width();
+        let header_height = 24.0f32;
+        let row_height = 22.0f32;
+        let code_width = 80.0f32;
+        let key_width = 60.0f32;
+        let type_width = 60.0f32;
+        let remaining = (width - code_width - key_width - type_width).max(200.0);
+        let song_width = remaining * 0.62;
+        let artist_width = remaining - song_width;
+        let columns = [code_width, song_width, artist_width, key_width, type_width];
+
+        let (header, _) =
+            ui.allocate_exact_size(egui::vec2(width, header_height), egui::Sense::hover());
+        let painter = ui.painter_at(header);
+        let line = egui::Stroke::new(1.0, Color32::from_gray(80));
+        painter.rect_filled(header, 0.0, Color32::from_gray(34));
+        painter.rect_stroke(
+            header,
+            0.0,
+            egui::Stroke::new(1.0, Color32::from_gray(90)),
+            egui::StrokeKind::Inside,
+        );
+        let mut x = header.left();
+        for (index, column) in columns.iter().enumerate() {
+            x += *column;
+            if index + 1 < columns.len() {
+                painter.line_segment(
+                    [Pos2::new(x, header.top()), Pos2::new(x, header.bottom())],
+                    line,
+                );
+            }
+        }
+        let labels = [tr("Code"), tr("Song"), tr("Artist"), tr("Key"), tr("Type")];
+        let mut x = header.left();
+        for (label, column) in labels.iter().zip(columns) {
+            painter
+                .with_clip_rect(Rect::from_min_size(
+                    Pos2::new(x, header.top()),
+                    egui::vec2(column, header_height),
+                ))
+                .text(
+                    Pos2::new(x + 4.0, header.center().y),
+                    egui::Align2::LEFT_CENTER,
+                    label,
+                    FontId::proportional(11.0),
+                    FG,
+                );
+            x += column;
+        }
+
+        if self.library_view.is_empty() {
+            let (empty, _) = ui.allocate_exact_size(egui::vec2(width, 210.0), egui::Sense::hover());
+            let painter = ui.painter_at(empty);
+            painter.rect_filled(empty, 0.0, Color32::from_gray(14));
+            painter.rect_stroke(
+                empty,
+                0.0,
+                egui::Stroke::new(1.0, Color32::from_gray(90)),
+                egui::StrokeKind::Inside,
+            );
+            let message = if self.library_load.is_some() {
+                "Loading the library..."
+            } else if self.library_songs.is_empty() {
+                "No songs yet. Press Create a database."
+            } else {
+                "No songs match your search."
+            };
+            painter.text(
+                empty.center(),
+                egui::Align2::CENTER_CENTER,
+                tr(message),
+                FontId::proportional(12.0),
+                DIM,
+            );
+            return;
+        }
+
+        egui::Frame::NONE
+            .fill(Color32::from_gray(14))
+            .stroke(egui::Stroke::new(1.0, Color32::from_gray(90)))
+            .show(ui, |ui| {
+                ui.set_min_height(210.0);
+                ui.set_width(width);
+                ui.spacing_mut().item_spacing.y = 0.0;
+                egui::ScrollArea::vertical()
+                    .max_height(210.0)
+                    .auto_shrink([false, false])
+                    .show_rows(ui, row_height, self.library_view.len(), |ui, range| {
+                        let left = ui.max_rect().left();
+                        let top = ui.max_rect().top();
+                        let width = ui.available_width();
+                        for (offset, index) in range.clone().enumerate() {
+                            let song = &self.library_songs[self.library_view[index]];
+                            let row = Rect::from_min_size(
+                                Pos2::new(left, top + offset as f32 * row_height),
+                                egui::vec2(width, row_height),
+                            );
+                            let painter = ui.painter_at(row);
+                            let fill = if index % 2 == 0 {
+                                Color32::from_gray(14)
+                            } else {
+                                Color32::from_gray(11)
+                            };
+                            painter.rect_filled(row, 0.0, fill);
+                            painter.line_segment(
+                                [
+                                    Pos2::new(row.left(), row.bottom()),
+                                    Pos2::new(row.right(), row.bottom()),
+                                ],
+                                line,
+                            );
+                            let mut x = row.left();
+                            for (column_index, column) in columns.iter().enumerate() {
+                                painter.line_segment(
+                                    [Pos2::new(x, row.top()), Pos2::new(x, row.bottom())],
+                                    line,
+                                );
+                                if column_index + 1 == columns.len() {
+                                    painter.line_segment(
+                                        [
+                                            Pos2::new(row.right(), row.top()),
+                                            Pos2::new(row.right(), row.bottom()),
+                                        ],
+                                        line,
+                                    );
+                                }
+                                x += *column;
+                            }
+
+                            let code = if song.missing {
+                                format!("! {}", song.code)
+                            } else {
+                                song.code.clone()
+                            };
+                            let cells = [
+                                (code, if song.missing { ERROR } else { FG }),
+                                (song.title.clone(), if song.missing { DIM } else { FG }),
+                                (song.artist.clone(), if song.missing { DIM } else { FG }),
+                                (
+                                    song.key.clone().unwrap_or_default(),
+                                    if song.missing { DIM } else { FG },
+                                ),
+                                (song.format.to_uppercase(), FG),
+                            ];
+                            let mut x = row.left();
+                            for ((text, color), column) in cells.iter().zip(columns) {
+                                let cell = Rect::from_min_size(
+                                    Pos2::new(x, row.top()),
+                                    egui::vec2(column, row_height),
+                                );
+                                painter
+                                    .with_clip_rect(cell.shrink2(egui::vec2(4.0, 0.0)))
+                                    .text(
+                                        Pos2::new(x + 4.0, row.center().y),
+                                        egui::Align2::LEFT_CENTER,
+                                        text,
+                                        FontId::proportional(11.0),
+                                        *color,
+                                    );
+                                x += column;
+                            }
+                            if song.missing {
+                                ui.interact(
+                                    row,
+                                    ui.scope_id().with(("library_missing", index)),
+                                    egui::Sense::hover(),
+                                )
+                                .on_hover_text(tr("File not found"));
+                            }
+                        }
+                    });
+            });
+    }
+
+    /// The "Song Data" settings page: database choice and folder roots.
+    fn song_data_page(&mut self, ui: &mut egui::Ui) -> bool {
+        let mut changed = false;
+        ui.add_space(20.0);
+        ui.horizontal_top(|ui| {
+            ui.add_space(18.0);
+            let width = (ui.available_width() - 18.0).max(300.0);
+            ui.allocate_ui_with_layout(
+                egui::vec2(width, ui.available_height()),
+                Layout::top_down(Align::Min),
+                |ui| {
+                    ui.set_width(width);
+                    changed |= self.song_data_content(ui);
+                },
+            );
+        });
+        changed
+    }
+
+    fn song_data_content(&mut self, ui: &mut egui::Ui) -> bool {
+        let mut changed = false;
+
+        ui.horizontal(|ui| {
+            ui.spacing_mut().item_spacing.x = 8.0;
+            if ui
+                .add_sized(
+                    [110.0, 28.0],
+                    egui::Button::new(RichText::new(tr("Song Data")).strong())
+                        .selected(true)
+                        .fill(Color32::from_gray(32)),
+                )
+                .clicked()
+            {
+                self.open_library();
+            }
+            if ui
+                .add_sized([110.0, 28.0], egui::Button::new(tr("Restore")))
+                .clicked()
+            {
+                self.song_restore_confirm = true;
+            }
+        });
+
+        ui.add_space(10.0);
+
+        let table_width = (ui.available_width() - 2.0).max(200.0);
+        let type_width = 110.0f32;
+        let header_height = 30.0f32;
+        let row_height = 30.0f32;
+        let rows = 3usize;
+        let (table_rect, _) = ui.allocate_exact_size(
+            egui::vec2(table_width, header_height + row_height * rows as f32),
+            egui::Sense::hover(),
+        );
+
+        let painter = ui.painter_at(table_rect);
+        painter.rect_filled(table_rect, 0.0, Color32::from_gray(14));
+        let header_rect = Rect::from_min_size(
+            table_rect.min,
+            egui::vec2(table_rect.width(), header_height),
+        );
+        painter.rect_filled(header_rect, 0.0, Color32::from_gray(34));
+
+        let line = egui::Stroke::new(1.0, Color32::from_gray(80));
+        let divider_x = table_rect.left() + type_width;
+        painter.line_segment(
+            [
+                Pos2::new(table_rect.left(), header_rect.bottom()),
+                Pos2::new(table_rect.right(), header_rect.bottom()),
+            ],
+            line,
+        );
+        for row in 1..rows {
+            let y = table_rect.top() + header_height + row as f32 * row_height;
+            painter.line_segment(
+                [
+                    Pos2::new(table_rect.left(), y),
+                    Pos2::new(table_rect.right(), y),
+                ],
+                line,
+            );
+        }
+        painter.line_segment(
+            [
+                Pos2::new(divider_x, table_rect.top()),
+                Pos2::new(divider_x, table_rect.bottom()),
+            ],
+            line,
+        );
+        painter.rect_stroke(
+            table_rect,
+            0.0,
+            egui::Stroke::new(1.0, Color32::from_gray(90)),
+            egui::StrokeKind::Inside,
+        );
+
+        painter.text(
+            Pos2::new(table_rect.left() + 6.0, header_rect.center().y),
+            egui::Align2::LEFT_CENTER,
+            tr("File type"),
+            FontId::proportional(11.0),
+            FG,
+        );
+        painter.text(
+            Pos2::new(divider_x + 6.0, header_rect.center().y),
+            egui::Align2::LEFT_CENTER,
+            tr("Folder path"),
+            FontId::proportional(11.0),
+            FG,
+        );
+
+        let entries = [
+            (
+                tr("NCN MIDI"),
+                self.settings.ncn_folder.as_deref(),
+                DialogKind::NcnFolder,
+            ),
+            (
+                tr("KMID MIDI"),
+                self.settings.kmid_folder.as_deref(),
+                DialogKind::KmidFolder,
+            ),
+            (
+                tr("KAR MIDI"),
+                self.settings.kar_folder.as_deref(),
+                DialogKind::KarFolder,
+            ),
+        ];
+        let mut browse: Option<DialogKind> = None;
+        for (index, (label, path, kind)) in entries.iter().enumerate() {
+            let row_top = table_rect.top() + header_height + index as f32 * row_height;
+            let row_rect = Rect::from_min_size(
+                Pos2::new(table_rect.left(), row_top),
+                egui::vec2(table_rect.width(), row_height),
+            );
+            painter.text(
+                Pos2::new(row_rect.left() + 6.0, row_rect.center().y),
+                egui::Align2::LEFT_CENTER,
+                label,
+                FontId::proportional(11.5),
+                FG,
+            );
+
+            let button_width = 38.0f32;
+            let field_x = divider_x + 6.0;
+            let field_right = row_rect.right() - 8.0 - button_width - 8.0;
+            let field_width = (field_right - field_x).max(80.0);
+            let field_rect = Rect::from_min_size(
+                Pos2::new(field_x, row_rect.center().y - 10.0),
+                egui::vec2(field_width, 20.0),
+            );
+            let button_rect = Rect::from_min_size(
+                Pos2::new(
+                    row_rect.right() - 8.0 - button_width,
+                    row_rect.center().y - 10.0,
+                ),
+                egui::vec2(button_width, 20.0),
+            );
+
+            let text = path
+                .map(|path| path.display().to_string())
+                .unwrap_or_else(|| tr("No folder selected"));
+            let full = text.clone();
+            painter.rect_filled(field_rect, 4.0, Color32::from_gray(26));
+            painter.rect_stroke(
+                field_rect,
+                4.0,
+                egui::Stroke::new(1.0, Color32::from_gray(64)),
+                egui::StrokeKind::Inside,
+            );
+            painter
+                .with_clip_rect(field_rect.shrink2(egui::vec2(6.0, 0.0)))
+                .text(
+                    Pos2::new(field_rect.left() + 6.0, field_rect.center().y),
+                    egui::Align2::LEFT_CENTER,
+                    &text,
+                    FontId::proportional(11.5),
+                    if path.is_some() { FG } else { DIM },
+                );
+            ui.interact(
+                field_rect,
+                ui.scope_id().with(("song_folder_path", index)),
+                egui::Sense::hover(),
+            )
+            .on_hover_text(full);
+
+            let response = ui.interact(
+                button_rect,
+                ui.scope_id().with(("song_folder_browse", index)),
+                egui::Sense::click(),
+            );
+            let fill = if response.hovered() {
+                Color32::from_gray(56)
+            } else {
+                Color32::from_gray(34)
+            };
+            painter.rect_filled(button_rect, 4.0, fill);
+            painter.rect_stroke(
+                button_rect,
+                4.0,
+                egui::Stroke::new(1.0, Color32::from_gray(90)),
+                egui::StrokeKind::Inside,
+            );
+            painter.text(
+                button_rect.center(),
+                egui::Align2::CENTER_CENTER,
+                "...",
+                FontId::proportional(12.0),
+                FG,
+            );
+            if response.clicked() {
+                browse = Some(*kind);
+            }
+        }
+        if let Some(kind) = browse {
+            self.start_dialog(kind);
+        }
+
+        if self.song_restore_confirm {
+            let mut close = false;
+            let mut restore = false;
+            let modal = egui::Modal::new(egui::Id::unique("song_restore_confirm"))
+                .backdrop_color(Color32::from_black_alpha(140))
+                .frame(
+                    egui::Frame::NONE
+                        .fill(Color32::from_rgb(8, 8, 8))
+                        .stroke(egui::Stroke::new(1.5, Color32::from_gray(120)))
+                        .corner_radius(egui::CornerRadius::same(12))
+                        .inner_margin(egui::Margin::symmetric(22, 18)),
+                )
+                .show(ui.ctx(), |ui| {
+                    ui.set_width(380.0);
+                    ui.label(
+                        RichText::new(tr("Restore folder paths?"))
+                            .size(15.0)
+                            .strong(),
+                    );
+                    ui.add_space(6.0);
+                    ui.label(tr(
+                        "This resets folder paths to the default folders inside the program folder. Songs and the database are not deleted.",
+                    ));
+                    ui.add_space(12.0);
+                    ui.horizontal(|ui| {
+                        if ui.button(tr("Restore")).clicked() {
+                            restore = true;
+                        }
+                        if ui.button(tr("Cancel")).clicked() {
+                            close = true;
+                        }
+                    });
+                });
+            if restore {
+                self.settings.ncn_folder = None;
+                self.settings.kmid_folder = None;
+                self.settings.kar_folder = None;
+                ensure_program_folders();
+                self.song_restore_confirm = false;
+                changed = true;
+                self.save_settings();
+            } else if close || modal.should_close() {
+                self.song_restore_confirm = false;
+            }
+        }
+
+        changed
+    }
+
     fn about_page(&mut self, ui: &mut egui::Ui) {
         ui.add_space(22.0);
         let page_rect = ui.max_rect();
@@ -2272,8 +5726,12 @@ impl KaraokeApp {
 
     // -------------------------------------------------------------- transport
 
+    /// Play/pause the loaded song. With nothing loaded (right after Stop) it
+    /// starts the playlist entry the operator expects instead of doing
+    /// nothing.
     fn toggle_play(&mut self) {
         let Some(playback) = &self.playback else {
+            self.play_from_playlist();
             return;
         };
         if self.paused {
@@ -2285,10 +5743,37 @@ impl KaraokeApp {
         }
     }
 
+    /// Start the highlighted playlist entry (or the one Stop interrupted, or
+    /// the first entry).
+    fn play_from_playlist(&mut self) -> bool {
+        let index = playlist_play_index(
+            self.playlist_selection,
+            self.stopped_index,
+            self.playlist.len(),
+        );
+        let Some(index) = index else {
+            return false;
+        };
+        let Some(path) = self.playlist.get(index).cloned() else {
+            return false;
+        };
+        self.open(path);
+        self.playlist_index = index;
+        self.playlist_selection = Some(index);
+        self.stopped_index = None;
+        true
+    }
+
     fn stop(&mut self) {
         // Stop also unloads the song: the transport, bar/beat and Song info
-        // all go back to the idle state.
+        // all go back to the idle state. Remember what was playing so Play
+        // starts it again.
+        let interrupted = self
+            .playlist_selection
+            .filter(|index| *index < self.playlist.len())
+            .or_else(|| (self.playlist_index < self.playlist.len()).then_some(self.playlist_index));
         self.clear_played_song();
+        self.stopped_index = interrupted;
     }
 
     /// Move to the next or previous bar line and show `NEXT >>>` / `BACK <<<`.
@@ -2329,6 +5814,10 @@ impl KaraokeApp {
     }
 
     fn change_transpose(&mut self, delta: i32, ctx: &egui::Context) {
+        // The key belongs to a song: without one there is nothing to transpose.
+        if self.song.is_none() {
+            return;
+        }
         self.transpose = (self.transpose + delta).clamp(-12, 12);
         if let Some(playback) = &self.playback {
             let _ = playback
@@ -2369,6 +5858,19 @@ impl KaraokeApp {
         });
     }
 
+    /// True while a settings-style window covers the lyric area.
+    ///
+    /// Those windows own the keyboard: the lyric search popup and the playlist
+    /// shortcuts must not react behind them.
+    fn window_open(&self) -> bool {
+        self.settings_open
+            || self.split_open
+            || self.library_open
+            || self.import_open
+            || self.about_popup.is_some()
+            || self.exit_confirm_open
+    }
+
     // ------------------------------------------------------------------ input
 
     fn handle_input(&mut self, ctx: &egui::Context) {
@@ -2393,10 +5895,171 @@ impl KaraokeApp {
             self.play_first_added(added);
         }
 
+        // The temporary search overlay owns Left/Right and Esc while open.
+        let modal_open = self.window_open();
+        if self.lyric_overlay_visible && !modal_open {
+            // Space reopens the song-info card instead of typing a leading
+            // space into the empty search box.
+            if !self.settings.show_song_info
+                && self.song.is_some()
+                && self.lyric_search.trim().is_empty()
+                && ctx.input(|i| i.key_pressed(egui::Key::Space))
+            {
+                self.hide_lyric_overlay_preserve_browse(ctx);
+                self.song_card_until =
+                    Some(ctx.input(|i| i.time) + self.settings.indicator_seconds as f64);
+                ctx.input_mut(|i| {
+                    i.consume_key(egui::Modifiers::NONE, egui::Key::Space);
+                });
+                return;
+            }
+            let (left, right, up, down, escape) = ctx.input(|i| {
+                (
+                    !i.modifiers.ctrl
+                        && !i.modifiers.alt
+                        && !i.modifiers.command
+                        && i.key_pressed(egui::Key::ArrowLeft),
+                    !i.modifiers.ctrl
+                        && !i.modifiers.alt
+                        && !i.modifiers.command
+                        && i.key_pressed(egui::Key::ArrowRight),
+                    !i.modifiers.ctrl
+                        && !i.modifiers.alt
+                        && !i.modifiers.command
+                        && i.key_pressed(egui::Key::ArrowUp),
+                    !i.modifiers.ctrl
+                        && !i.modifiers.alt
+                        && !i.modifiers.command
+                        && i.key_pressed(egui::Key::ArrowDown),
+                    i.key_pressed(egui::Key::Escape),
+                )
+            });
+            if escape {
+                self.hide_lyric_overlay(ctx);
+                return;
+            }
+            if up || down {
+                self.hide_lyric_overlay(ctx);
+                self.search_restore_playlist = false;
+                self.playlist_step(if down { 1 } else { -1 }, ctx);
+                ctx.input_mut(|i| {
+                    i.consume_key(egui::Modifiers::NONE, egui::Key::ArrowUp);
+                    i.consume_key(egui::Modifiers::NONE, egui::Key::ArrowDown);
+                });
+                return;
+            }
+            if left || right {
+                self.step_lyric_selection(if right { 1 } else { -1 });
+                self.lyric_overlay_until =
+                    ctx.input(|i| i.time) + self.settings.popup_seconds as f64;
+                ctx.input_mut(|i| {
+                    i.consume_key(egui::Modifiers::NONE, egui::Key::ArrowLeft);
+                    i.consume_key(egui::Modifiers::NONE, egui::Key::ArrowRight);
+                });
+                return;
+            }
+            if ctx.input(|i| i.key_pressed(egui::Key::Enter)) {
+                if let Some(path) = self.selected_lyric_path() {
+                    self.select_search_song(path, ctx);
+                }
+                return;
+            }
+        }
+
+        // Typing a letter or number, or pressing Left/Right, opens the popup
+        // when no other text field has keyboard focus.
+        if !ctx.egui_wants_keyboard_input() && !modal_open {
+            let (text, left, right, modifiers) = ctx.input(|i| {
+                let mut text = String::new();
+                for event in &i.events {
+                    if let egui::Event::Text(value) = event {
+                        text.push_str(value);
+                    }
+                }
+                (
+                    text,
+                    i.key_pressed(egui::Key::ArrowLeft),
+                    i.key_pressed(egui::Key::ArrowRight),
+                    i.modifiers,
+                )
+            });
+            let wants_text = !modifiers.ctrl
+                && !modifiers.alt
+                && !modifiers.command
+                && text.chars().any(|ch| ch.is_alphanumeric());
+            if wants_text {
+                if !self.lyric_overlay_visible {
+                    self.show_lyric_overlay(ctx);
+                    self.lyric_search.clear();
+                    self.lyric_browse = None;
+                    self.lyric_overlay_remembered = false;
+                }
+                self.lyric_search.push_str(&text);
+                self.lyric_search_focus = true;
+                self.lyric_browse = None;
+                self.lyric_query_cache.clear();
+                self.lyric_overlay_until =
+                    ctx.input(|i| i.time) + self.settings.popup_seconds as f64;
+                if let Some(id) = self.lyric_search_id {
+                    ctx.data_mut(|data| {
+                        data.remove::<egui::widgets::text_edit::TextEditState>(id);
+                    });
+                }
+                ctx.input_mut(|i| {
+                    i.events
+                        .retain(|event| !matches!(event, egui::Event::Text(_)));
+                });
+                return;
+            }
+            if !self.lyric_overlay_visible && (left || right) {
+                let remembered = self.lyric_overlay_remembered;
+                self.lyric_overlay_remembered = false;
+                self.show_lyric_overlay(ctx);
+                // The first press reveals the remembered song; the next
+                // press moves to the neighbour.
+                if !remembered && self.lyric_browse.is_none() {
+                    self.step_lyric_selection(if right { 1 } else { -1 });
+                }
+                ctx.input_mut(|i| {
+                    i.consume_key(egui::Modifiers::NONE, egui::Key::ArrowLeft);
+                    i.consume_key(egui::Modifiers::NONE, egui::Key::ArrowRight);
+                });
+                return;
+            }
+        }
+
+        // A settings-style window owns the keyboard and the transport: no
+        // global shortcut may fire behind it. Its own widgets still get their
+        // keys because egui handles those before this point.
+        if modal_open {
+            return;
+        }
+
+        // The lyric search field (and any other text input) owns the keyboard
+        // while focused, so single-key shortcuts must not fire. Transport keys
+        // stay available so the operator can still control playback.
+        if ctx.egui_wants_keyboard_input() {
+            let transport = ctx.input(|i| {
+                i.key_pressed(egui::Key::F5)
+                    || i.key_pressed(egui::Key::F6)
+                    || i.key_pressed(egui::Key::F7)
+                    || i.key_pressed(egui::Key::F8)
+            });
+            if !transport {
+                return;
+            }
+        }
+
         if ctx.input(|i| i.key_pressed(egui::Key::F5)) {
+            // With nothing loaded this starts the playlist entry.
+            let had_song = self.playback.is_some();
+            self.toggle_play();
             if self.playback.is_some() {
-                self.toggle_play();
-                let state = if self.paused { tr("PAUSE") } else { tr("PLAY") };
+                let state = if self.paused && had_song {
+                    tr("PAUSE")
+                } else {
+                    tr("PLAY")
+                };
                 self.show_indicator(state, ctx);
             }
         }
@@ -2406,17 +6069,18 @@ impl KaraokeApp {
                 self.show_indicator(tr("STOP"), ctx);
             }
         }
-        // Esc dismisses the song card first, then closes the playlist.
+        // Ctrl+Backspace resets the MIDI device immediately.
+        if ctx.input(|i| i.modifiers.command && i.key_pressed(egui::Key::Backspace))
+            && !ctx.egui_wants_keyboard_input()
+        {
+            self.send_midi_reset();
+            self.show_indicator(tr("MIDI RESET"), ctx);
+            ctx.input_mut(|i| {
+                i.consume_key(egui::Modifiers::COMMAND, egui::Key::Backspace);
+            });
+        }
         if ctx.input(|i| i.key_pressed(egui::Key::Escape)) && !egui::Popup::is_any_open(ctx) {
-            let now = ctx.input(|i| i.time);
-            let card_visible = !self.settings.show_song_info
-                && self.song.is_some()
-                && self.song_card_until.is_some_and(|until| now < until);
-            if card_visible {
-                self.song_card_until = None;
-            } else {
-                self.close_playlist();
-            }
+            self.close_playlist();
         }
         if ctx.input(|i| i.key_pressed(egui::Key::F7)) {
             self.seek_bar(false, ctx);
@@ -2424,15 +6088,23 @@ impl KaraokeApp {
         if ctx.input(|i| i.key_pressed(egui::Key::F8)) {
             self.seek_bar(true, ctx);
         }
-        // Space re-shows the song card when the top bar info is hidden. It is
-        // reserved for the playlist while that panel is open.
+        // Space toggles the song card when the top bar info is hidden. While
+        // the playlist is open it closes the playlist and shows the card.
         if ctx.input(|i| i.key_pressed(egui::Key::Space))
             && !self.settings.show_song_info
-            && !self.settings.show_playlist
+            && !self.lyric_overlay_visible
             && self.song.is_some()
         {
             let now = ctx.input(|i| i.time);
-            self.song_card_until = Some(now + self.settings.indicator_seconds as f64);
+            let card_visible = self.song_card_until.is_some_and(|until| now < until);
+            if self.settings.show_playlist {
+                self.close_playlist();
+            }
+            self.song_card_until = if card_visible {
+                None
+            } else {
+                Some(now + self.settings.indicator_seconds as f64)
+            };
         }
         // Up/down browse the playlist; Enter plays the highlighted entry.
         if ctx.input(|i| i.key_pressed(egui::Key::ArrowUp)) {
@@ -2445,6 +6117,8 @@ impl KaraokeApp {
             if let Some(index) = self.playlist_selection {
                 if let Some(path) = self.playlist.get(index).cloned() {
                     self.open(path);
+                    self.playlist_index = index;
+                    self.playlist_selection = Some(index);
                 }
             }
         }
@@ -2490,20 +6164,22 @@ impl KaraokeApp {
                 ctx,
             );
             self.save_settings();
+            self.save_settings();
         }
 
         // BPM: Ctrl+' faster, Ctrl+; slower (20..200, one step = 1 BPM).
         let bpm_up = ctx.input(|i| i.modifiers.ctrl && i.key_pressed(egui::Key::Quote));
         let bpm_down = ctx.input(|i| i.modifiers.ctrl && i.key_pressed(egui::Key::Semicolon));
-        if (bpm_up || bpm_down) && now - self.last_bpm_shortcut >= 0.12 {
+        if (bpm_up || bpm_down) && now - self.last_bpm_shortcut >= 0.12 && self.song.is_some() {
             self.last_bpm_shortcut = now;
             self.bpm = (self.bpm + if bpm_up { 1.0 } else { -1.0 }).clamp(20.0, 200.0);
             self.update_playback_speed();
             self.show_bpm_indicator(ctx);
         }
 
-        // UI zoom is handled by egui itself (Ctrl+- / Ctrl++ / Ctrl+0); show
-        // the resulting level in the same readout.
+        // UI zoom: Ctrl+- / Ctrl++ / Ctrl+0. Applying it here (instead of
+        // letting egui handle the keys) lets the auto-fit pass know the user
+        // chose a level.
         let (zoom_in, zoom_out, zoom_reset) = ctx.input(|i| {
             let command = i.modifiers.command;
             (
@@ -2525,6 +6201,7 @@ impl KaraokeApp {
                 }
                 zoom = (zoom.clamp(0.2, 5.0) * 10.0).round() / 10.0;
             }
+            ctx.set_zoom_factor(zoom);
             let percent = (zoom * 100.0).round() as i32;
             self.show_indicator(
                 tr_args("UI [{}%]", &[&percent as &dyn std::fmt::Display]),
@@ -2558,9 +6235,18 @@ impl KaraokeApp {
         let over_playlist = pointer
             .map(|pos| self.playlist_rect.contains(pos))
             .unwrap_or(false);
+        let over_lyric_search = pointer
+            .map(|pos| self.lyric_search_rect.contains(pos))
+            .unwrap_or(false);
 
+        let over_window = self.library_open
+            || self.import_open
+            || self.settings_open
+            || self.split_open
+            || self.about_popup.is_some()
+            || self.exit_confirm_open;
         // Ctrl+wheel is egui's zoom gesture, so leave that alone.
-        if scroll.abs() > 0.01 && !over_playlist && !ctrl {
+        if scroll.abs() > 0.01 && !over_playlist && !over_lyric_search && !over_window && !ctrl {
             let before = self.volume;
             self.volume = (self.volume + scroll * 0.0012).clamp(0.0, 1.0);
             if (self.volume - before).abs() > 1e-5 {
@@ -2572,6 +6258,8 @@ impl KaraokeApp {
                     tr_args("VOL [{}]", &[&percent as &dyn std::fmt::Display]),
                     ctx,
                 );
+                // Persist the wheel change even without a song loaded.
+                self.settings_save_at = Some(ctx.input(|i| i.time) + 0.6);
             }
         }
 
@@ -2708,20 +6396,33 @@ impl KaraokeApp {
                 if self.settings.show_song_info {
                     match &self.song {
                         Some(song) => {
+                            // A plain MIDI usually has no title of its own: use
+                            // the file name so the bar is not empty.
+                            let file_name = self.path.as_deref().map(file_stem).unwrap_or_default();
                             let title = song
                                 .title
-                                .as_deref()
-                                .map(str::to_owned)
+                                .clone()
+                                .filter(|title| !title.trim().is_empty())
+                                .or_else(|| (!file_name.is_empty()).then(|| file_name.clone()))
                                 .unwrap_or_else(|| tr("Untitled"));
                             let title_galley =
                                 painter.layout_no_wrap(title, FontId::proportional(17.0), FG);
-                            let artist_galley = song.artist.as_ref().map(|artist| {
-                                painter.layout_no_wrap(
-                                    format!("— {artist}"),
-                                    FontId::proportional(14.0),
-                                    DIM,
-                                )
-                            });
+                            // Files sometimes repeat their own file name as the
+                            // artist; never show that twice.
+                            let artist_galley = song
+                                .artist
+                                .as_deref()
+                                .filter(|artist| !artist.trim().is_empty())
+                                .filter(|artist| {
+                                    !artist.trim().eq_ignore_ascii_case(file_name.trim())
+                                })
+                                .map(|artist| {
+                                    painter.layout_no_wrap(
+                                        format!("— {artist}"),
+                                        FontId::proportional(14.0),
+                                        DIM,
+                                    )
+                                });
 
                             let gap = if artist_galley.is_some() { 8.0 } else { 0.0 };
                             let mut x = left;
@@ -2913,6 +6614,53 @@ impl KaraokeApp {
 
                 let painter = ui.painter_at(rect);
 
+                // An image background fills the lyric area and scales with the
+                // window: the shipped artwork, or the user's own picture.
+                let background_texture = match self.settings.background_style {
+                    BackgroundStyle::Default => self.default_background.as_ref(),
+                    BackgroundStyle::Image => {
+                        self.background_texture.as_ref().map(|(_, texture)| texture)
+                    }
+                    BackgroundStyle::Color => None,
+                };
+                if let Some(texture) = background_texture {
+                    paint_cover(&painter, rect, texture);
+                }
+
+                // The readouts (VOL/KEY/BPM/FONT/UI) work without a song, so
+                // they are drawn before the "no song" return below.
+                if let Some(indicator) = &self.indicator {
+                    let now = ui.ctx().input(|i| i.time);
+                    if now <= indicator.until {
+                        let text = if indicator.bpm {
+                            bpm_readout(self.bpm_adjust(), self.current_bpm())
+                        } else {
+                            indicator.text.clone()
+                        };
+                        let scale = window_fit_scale(ui.ctx());
+                        let mut top_offset = if self.settings.show_playlist
+                            && !matches!(self.settings.text_visibility, TextVisibility::Upper)
+                        {
+                            8.0
+                        } else {
+                            18.0
+                        };
+                        // The search popup covers the top of the lyrics: put the
+                        // readout below it instead of drawing over its text.
+                        if self.lyric_overlay_visible
+                            && self.lyric_overlay_rect.is_positive()
+                            && self.lyric_overlay_rect.top() <= rect.top() + 40.0 * scale
+                        {
+                            let below =
+                                self.lyric_overlay_rect.bottom() - rect.top() + 10.0 * scale;
+                            top_offset = (below / scale).max(top_offset);
+                        }
+                        // Never let it fall out of the lyrics area.
+                        top_offset = top_offset.min((rect.height() - 80.0 * scale) / scale);
+                        draw_indicator(&painter, rect, top_offset, scale, &text);
+                    }
+                }
+
                 let Some(song) = &self.song else {
                     return;
                 };
@@ -2951,10 +6699,17 @@ impl KaraokeApp {
                 let edge = size * 0.05 * self.settings.lyric_edge_size.clamp(0.0, 2.0);
 
                 let gap = size * 1.4 * self.settings.lyric_distance.clamp(0.5, 3.0);
+                // Upper and lower lyrics keep their position from before the
+                // playlist opened; only the centred position follows the
+                // remaining area.
                 let raw_center = match self.settings.text_visibility {
                     TextVisibility::Center => rect.center().y,
-                    TextVisibility::Upper => rect.top() + rect.height() * 0.22,
-                    TextVisibility::Lower => rect.top() + rect.height() * 0.78,
+                    TextVisibility::Upper => {
+                        self.lyric_area.top() + self.lyric_area.height() * 0.22
+                    }
+                    TextVisibility::Lower => {
+                        self.lyric_area.top() + self.lyric_area.height() * 0.78
+                    }
                 };
                 let max_half = rect.height() * 0.5;
                 let half_block = (gap * 0.5 + size * 0.7).min(max_half);
@@ -3005,21 +6760,12 @@ impl KaraokeApp {
                     );
                 }
 
-                if let Some(indicator) = &self.indicator {
-                    let now = ui.ctx().input(|i| i.time);
-                    if now <= indicator.until {
-                        let text = if indicator.bpm {
-                            bpm_readout(self.bpm_adjust(), self.current_bpm())
-                        } else {
-                            indicator.text.clone()
-                        };
-                        draw_indicator(&painter, rect, &text);
-                    }
-                }
-
                 // When the top-bar song info is hidden, show the translucent
                 // song card for the first five seconds (and on Space).
-                if !self.settings.show_song_info {
+                if !self.settings.show_song_info
+                    && !self.settings.show_playlist
+                    && !self.lyric_overlay_visible
+                {
                     let now = ui.ctx().input(|i| i.time);
                     if let (Some(song), Some(until)) = (self.song.as_ref(), self.song_card_until) {
                         if now < until {
@@ -3036,6 +6782,8 @@ impl KaraokeApp {
                     }
                 }
             });
+
+        self.central_rect = central.response.rect;
 
         // Hide the pointer while it is over the lyric display; the context
         // menu and the settings dialog always keep it visible.
@@ -3061,6 +6809,8 @@ impl KaraokeApp {
     }
 
     fn open_menu(&mut self, kind: MenuKind, pos: Pos2) {
+        self.midi_menu_rect = Rect::NOTHING;
+        self.refresh_midi_ports();
         self.menu = Some(OpenMenu {
             kind,
             pos,
@@ -3079,16 +6829,30 @@ impl KaraokeApp {
             MenuAction::ImportPlaylist => self.import_playlist(),
             MenuAction::ExportPlaylist => self.export_playlist(),
             MenuAction::TogglePlaylist => {
-                self.settings.show_playlist = !self.settings.show_playlist;
+                let show = !self.settings.show_playlist;
+                if show {
+                    self.dismiss_song_card();
+                }
+                if self.lyric_overlay_visible {
+                    self.hide_lyric_overlay(ctx);
+                }
+                self.search_restore_playlist = false;
+                self.settings.show_playlist = show;
                 self.temp_playlist_until = None;
                 self.temp_playlist_hidden = false;
                 self.save_settings();
             }
             MenuAction::Remove(index) => self.remove_playlist_entry(index),
             MenuAction::Settings => self.open_settings(),
+            MenuAction::SongData => self.open_library(),
+            MenuAction::SetMidiOut(port) => self.apply_midi_out(port),
+            MenuAction::SplitVoice => {
+                self.refresh_midi_ports();
+                self.split_open = true;
+            }
             MenuAction::About => {
                 self.open_settings();
-                self.settings_section = 5;
+                self.settings_section = 7;
             }
             MenuAction::ToggleFullscreen => {
                 let fullscreen = ctx.input(|i| i.viewport().fullscreen.unwrap_or(false));
@@ -3108,6 +6872,8 @@ impl KaraokeApp {
                 self.save_settings();
             }
             MenuAction::ClearPlaylist => self.clear_playlist(),
+            MenuAction::PlaylistPrev => self.advance(-1),
+            MenuAction::PlaylistNext => self.advance(1),
             MenuAction::Exit => {
                 if self.settings.confirm_exit {
                     self.exit_confirm_open = true;
@@ -3133,6 +6899,13 @@ impl KaraokeApp {
         let closing = menu.closing;
         let submenu_open = menu.submenu_open;
 
+        // Escape closes the menu like a native popup.
+        if !closing && ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
+            if let Some(menu) = self.menu.as_mut() {
+                menu.closing = true;
+            }
+        }
+
         let dt = ctx.input(|i| i.stable_dt).min(0.1);
         let next_alpha = if closing {
             (alpha - dt / 0.15).max(0.0)
@@ -3146,9 +6919,9 @@ impl KaraokeApp {
 
         let screen = ctx.content_rect();
         let (width, height) = match kind {
-            MenuKind::Row(_) => (188.0, 90.0),
-            MenuKind::Background => (188.0, 190.0),
-            MenuKind::Central => (188.0, 224.0),
+            MenuKind::Row(_) => (188.0, 192.0),
+            MenuKind::Background => (188.0, 272.0),
+            MenuKind::Central => (188.0, 246.0),
         };
         let pos = Pos2::new(
             pos.x.min(screen.right() - width).max(screen.left()),
@@ -3159,6 +6932,8 @@ impl KaraokeApp {
         let mut song_row: Option<Rect> = None;
         let mut song_hovered = false;
         let mut song_clicked = false;
+        let mut midi_row_rect: Option<Rect> = None;
+        let mut midi_hovered = false;
         let area = egui::Area::new(egui::Id::unique("context_menu"))
             .order(egui::Order::Foreground)
             .fixed_pos(pos)
@@ -3180,6 +6955,31 @@ impl KaraokeApp {
                                 song_hovered = row.hovered();
                                 song_clicked = row.clicked();
                                 song_row = Some(row.rect);
+                                ui.separator();
+                                let playlist = if self.settings.show_playlist {
+                                    tr("Hide playlist")
+                                } else {
+                                    tr("Show playlist")
+                                };
+                                if menu_item(ui, Icon::ListMusic, &playlist) {
+                                    action = Some(MenuAction::TogglePlaylist);
+                                }
+                                if menu_item(ui, Icon::Database, &tr("Song Data")) {
+                                    action = Some(MenuAction::SongData);
+                                }
+                                if menu_item(ui, Icon::Music, &tr("Split MIDI")) {
+                                    action = Some(MenuAction::SplitVoice);
+                                }
+                                let midi_row = menu_item_response(
+                                    ui,
+                                    Icon::AudioLines,
+                                    &format!("{}  \u{203a}", tr("MIDI Out")),
+                                );
+                                midi_hovered = midi_row.hovered();
+                                midi_row_rect = Some(midi_row.rect);
+                                if menu_item(ui, Icon::Settings, &tr("Setting…")) {
+                                    action = Some(MenuAction::Settings);
+                                }
                                 ui.separator();
                                 let fullscreen =
                                     ctx.input(|i| i.viewport().fullscreen.unwrap_or(false));
@@ -3213,17 +7013,6 @@ impl KaraokeApp {
                                     action = Some(MenuAction::ToggleCursor);
                                 }
                                 ui.separator();
-                                let playlist = if self.settings.show_playlist {
-                                    tr("Hide playlist")
-                                } else {
-                                    tr("Show playlist")
-                                };
-                                if menu_item(ui, Icon::ListMusic, &playlist) {
-                                    action = Some(MenuAction::TogglePlaylist);
-                                }
-                                if menu_item(ui, Icon::Settings, &tr("Setting…")) {
-                                    action = Some(MenuAction::Settings);
-                                }
                                 if menu_item(ui, Icon::Info, &tr("About")) {
                                     action = Some(MenuAction::About);
                                 }
@@ -3237,6 +7026,24 @@ impl KaraokeApp {
                                     action = Some(MenuAction::Remove(index));
                                 }
                                 ui.separator();
+                                if menu_item(ui, Icon::SkipBack, &tr("Prev")) {
+                                    action = Some(MenuAction::PlaylistPrev);
+                                }
+                                if menu_item(ui, Icon::SkipForward, &tr("Next")) {
+                                    action = Some(MenuAction::PlaylistNext);
+                                }
+                                let repeat_label = if self.settings.repeat {
+                                    tr("Repeat: On")
+                                } else {
+                                    tr("Repeat: Off")
+                                };
+                                if menu_item(ui, Icon::Repeat2, &repeat_label) {
+                                    action = Some(MenuAction::ToggleRepeat);
+                                }
+                                if menu_item(ui, Icon::Trash2, &tr("Clear playlist")) {
+                                    action = Some(MenuAction::ClearPlaylist);
+                                }
+                                ui.separator();
                                 if menu_item(ui, Icon::ListMusic, &tr("Hide playlist")) {
                                     action = Some(MenuAction::TogglePlaylist);
                                 }
@@ -3247,6 +7054,24 @@ impl KaraokeApp {
                                 }
                                 if menu_item(ui, Icon::FolderPlus, &tr("Add folder…")) {
                                     action = Some(MenuAction::AddFolder);
+                                }
+                                ui.separator();
+                                if menu_item(ui, Icon::SkipBack, &tr("Prev")) {
+                                    action = Some(MenuAction::PlaylistPrev);
+                                }
+                                if menu_item(ui, Icon::SkipForward, &tr("Next")) {
+                                    action = Some(MenuAction::PlaylistNext);
+                                }
+                                let repeat_label = if self.settings.repeat {
+                                    tr("Repeat: On")
+                                } else {
+                                    tr("Repeat: Off")
+                                };
+                                if menu_item(ui, Icon::Repeat2, &repeat_label) {
+                                    action = Some(MenuAction::ToggleRepeat);
+                                }
+                                if menu_item(ui, Icon::Trash2, &tr("Clear playlist")) {
+                                    action = Some(MenuAction::ClearPlaylist);
                                 }
                                 ui.separator();
                                 if menu_item(ui, Icon::Download, &tr("Import playlist…")) {
@@ -3296,6 +7121,39 @@ impl KaraokeApp {
                     self.menu.as_mut().unwrap().submenu_open = true;
                 } else if over_main {
                     self.menu.as_mut().unwrap().submenu_open = false;
+                }
+            }
+        }
+
+        // MIDI Out flyout: opens on hover and stays while the pointer is in it.
+        if matches!(kind, MenuKind::Central) {
+            if let Some(row) = midi_row_rect {
+                let pointer = ctx.input(|i| i.pointer.hover_pos());
+                let over_flyout = pointer.is_some_and(|p| self.midi_menu_rect.contains(p));
+                if midi_hovered || over_flyout {
+                    // The Song Player flyout must not stay open as well.
+                    if midi_hovered {
+                        if let Some(menu) = &mut self.menu {
+                            menu.submenu_open = false;
+                        }
+                    }
+                    let width = 250.0;
+                    let x = if row.right() + 2.0 + width <= screen.right() {
+                        row.right() + 2.0
+                    } else {
+                        area.response.rect.left() - width - 2.0
+                    };
+                    let (act, rect) = midi_out_submenu(
+                        ctx,
+                        Pos2::new(x, row.top() - 6.0),
+                        alpha,
+                        &self.settings.midi_out_port,
+                        &self.midi_ports,
+                    );
+                    sub_action = act;
+                    self.midi_menu_rect = rect;
+                } else {
+                    self.midi_menu_rect = Rect::NOTHING;
                 }
             }
         }
@@ -3410,6 +7268,10 @@ impl KaraokeApp {
 impl eframe::App for KaraokeApp {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         let ctx = ui.ctx().clone();
+        self.sync_background_image(&ctx);
+        self.poll_missing_check();
+        self.poll_library_load();
+        self.poll_library_op();
         if self.startup_active {
             self.poll_startup(&ctx);
             if self.startup_active {
@@ -3480,7 +7342,10 @@ impl eframe::App for KaraokeApp {
         // Start the song card timer on the first frame after a song opens.
         if self.song_card_pending {
             self.song_card_pending = false;
-            if !self.settings.show_song_info {
+            if !self.settings.show_song_info
+                && !self.settings.show_playlist
+                && !self.lyric_overlay_visible
+            {
                 let now = ctx.input(|i| i.time);
                 self.song_card_until = Some(now + self.settings.indicator_seconds as f64);
             }
@@ -3504,6 +7369,7 @@ impl eframe::App for KaraokeApp {
                 self.exit_confirmed = true;
             }
         }
+        self.update_lyric_overlay(&ctx);
         // While the settings dialog or the exit confirmation is open it owns
         // the keyboard.
         if !self.settings_open && !self.exit_confirm_open && self.menu.is_none() {
@@ -3577,14 +7443,30 @@ impl eframe::App for KaraokeApp {
 
         self.top_bar(ui);
         self.bottom_bar(ui);
+        self.lyric_area = ui.available_rect_before_wrap();
         if self.settings.show_playlist {
             self.playlist_panel(ui);
         }
         self.central(ui);
+        if self.lyric_overlay_visible {
+            self.lyric_search_overlay(&ctx);
+        }
         self.draw_menu(&ctx);
 
         if self.settings_open {
             self.settings_modal(&ctx);
+        }
+
+        if self.split_open {
+            self.split_modal(&ctx);
+        }
+
+        if self.library_open {
+            self.library_modal(&ctx);
+        }
+
+        if self.import_open {
+            self.import_modal(&ctx);
         }
 
         if self.exit_confirm_open {
@@ -3636,6 +7518,38 @@ fn is_song_file(path: &Path) -> bool {
 }
 
 /// Best-effort file type for playlist export (`kar`, `ncn`, `midi`).
+/// Draw one coloured segment of a playlist row and advance the pen.
+fn draw_playlist_segment(
+    painter: &egui::Painter,
+    x: &mut f32,
+    y: f32,
+    text: &str,
+    font: &FontId,
+    color: Color32,
+    gap: f32,
+) {
+    if text.is_empty() {
+        return;
+    }
+    let galley = painter.layout_no_wrap(text.to_owned(), font.clone(), color);
+    let width = galley.size().x;
+    let height = galley.size().y;
+    painter.galley(Pos2::new(*x, y - height * 0.5), galley, color);
+    *x += width + gap;
+}
+
+/// How much the fixed-size overlays should shrink to fit the window.
+fn window_fit_scale(ctx: &egui::Context) -> f32 {
+    let logical = ctx.content_rect().size() * ctx.zoom_factor();
+    (logical.x / 1366.0).min(logical.y / 768.0).clamp(0.70, 1.0)
+}
+
+fn file_stem(path: &Path) -> String {
+    path.file_stem()
+        .map(|stem| stem.to_string_lossy().into_owned())
+        .unwrap_or_else(|| path.display().to_string())
+}
+
 fn file_type_guess(path: &Path) -> String {
     let extension = path
         .extension()
@@ -4094,33 +8008,36 @@ fn draw_time_signature(ui: &mut egui::Ui, bar: u32, beat: u32, beats: u32, activ
 ///
 /// The box is locked to the size of the widest readout (`BPM : 200 [-180]`),
 /// while the text itself is drawn a little smaller and centred inside it.
-fn draw_indicator(painter: &egui::Painter, rect: Rect, text: &str) {
+fn draw_indicator(painter: &egui::Painter, rect: Rect, top_offset: f32, scale: f32, text: &str) {
     // Every readout uses the size of the widest one, so the box is locked and
     // never jumps when the text changes.
     let size = painter
         .layout_no_wrap(
             "BPM : 200 [-180]".to_owned(),
-            FontId::new(22.0, FontFamily::Monospace),
+            FontId::new(25.0 * scale, FontFamily::Monospace),
             FG,
         )
         .size()
-        + egui::vec2(36.0, 22.0);
+        + egui::vec2(42.0, 26.0) * scale;
     let box_rect = Rect::from_min_size(
-        Pos2::new(rect.max.x - size.x - 20.0, rect.min.y + 18.0),
+        Pos2::new(
+            rect.max.x - size.x - 20.0 * scale,
+            rect.min.y + top_offset * scale,
+        ),
         size,
     );
 
-    painter.rect_filled(box_rect, 7.0, Color32::from_black_alpha(215));
+    painter.rect_filled(box_rect, 7.0 * scale, Color32::from_black_alpha(150));
     painter.rect_stroke(
         box_rect,
-        7.0,
-        egui::Stroke::new(1.8, FG),
+        7.0 * scale,
+        egui::Stroke::new(1.8 * scale, FG),
         egui::StrokeKind::Inside,
     );
 
     let text_galley = painter.layout_no_wrap(
         text.to_owned(),
-        FontId::new(17.0, FontFamily::Monospace),
+        FontId::new(20.0 * scale, FontFamily::Monospace),
         FG,
     );
     let text_pos = box_rect.center() - text_galley.size() * 0.5;
@@ -4239,6 +8156,176 @@ fn draw_plain(
 
 /// Build and show one native dialog. This runs on the worker thread so the
 /// UI thread stays responsive.
+fn import_copy(
+    record: &SongRecord,
+    destination: &Path,
+) -> anyhow::Result<(SongRecord, Vec<PathBuf>)> {
+    let source = &record.path;
+    if !source.is_file() {
+        anyhow::bail!("source file is missing");
+    }
+    let mut files = Vec::new();
+    match record.format.as_str() {
+        "ncn" => {
+            let (lyrics, cursor) = ncn::locate(source, &LoadOptions::default())
+                .ok_or_else(|| anyhow::anyhow!("NCN companions are missing"))?;
+            let extension = source
+                .extension()
+                .and_then(|value| value.to_str())
+                .unwrap_or("mid");
+            files.push((
+                source.clone(),
+                destination.join(format!("{}.{}", record.code, extension)),
+            ));
+            files.push((lyrics, destination.join(format!("{}.lyr", record.code))));
+            files.push((cursor, destination.join(format!("{}.cur", record.code))));
+        }
+        "kmid" | "kar" => {
+            let extension = source
+                .extension()
+                .and_then(|value| value.to_str())
+                .unwrap_or(if record.format == "kar" { "kar" } else { "mid" });
+            files.push((
+                source.clone(),
+                destination.join(format!("{}.{}", record.code, extension)),
+            ));
+        }
+        _ => anyhow::bail!("unsupported format"),
+    }
+    if files.iter().any(|(_, path)| path.exists()) {
+        anyhow::bail!("destination already exists");
+    }
+    std::fs::create_dir_all(destination)?;
+    let mut copied = Vec::new();
+    for (from, to) in &files {
+        if let Err(err) = std::fs::copy(from, to) {
+            for path in copied {
+                let _ = std::fs::remove_file(path);
+            }
+            return Err(err.into());
+        }
+        copied.push(to.clone());
+    }
+    let copied_path = files[0].1.clone();
+    let mut song = record.clone();
+    song.path = copied_path.clone();
+    song.file_name = copied_path
+        .file_name()
+        .map(|name| name.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    song.missing = false;
+    if let Ok(metadata) = std::fs::metadata(&copied_path) {
+        song.file_size = metadata.len();
+    }
+    let copied_files = files.iter().map(|(_, to)| to.clone()).collect();
+    Ok((song, copied_files))
+}
+
+fn program_folder(name: &str) -> Option<PathBuf> {
+    std::env::current_exe()
+        .ok()
+        .and_then(|exe| exe.parent().map(|dir| dir.join(name)))
+}
+
+/// Local stamp such as `20261114-235959`, used for backup file names.
+fn local_time_stamp() -> String {
+    #[cfg(windows)]
+    {
+        use windows_sys::Win32::Foundation::SYSTEMTIME;
+        use windows_sys::Win32::System::SystemInformation::GetLocalTime;
+
+        let mut time = unsafe { std::mem::zeroed::<SYSTEMTIME>() };
+        unsafe { GetLocalTime(&mut time) };
+        format!(
+            "{:04}{:02}{:02}-{:02}{:02}{:02}",
+            time.wYear, time.wMonth, time.wDay, time.wHour, time.wMinute, time.wSecond
+        )
+    }
+
+    #[cfg(not(windows))]
+    {
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|duration| duration.as_secs().to_string())
+            .unwrap_or_else(|_| "0".to_owned())
+    }
+}
+
+/// Write a timestamped copy of the library into `config/backups`.
+fn backup_library() -> anyhow::Result<(PathBuf, u64)> {
+    let folder = Library::default_path()
+        .and_then(|path| path.parent().map(|dir| dir.join("backups")))
+        .ok_or_else(|| anyhow::anyhow!("no per-user config directory available"))?;
+    let target = folder.join(format!("library-{}.sqlite", local_time_stamp()));
+    let library = Library::open_default()?;
+    let size = library.backup_to(&target)?;
+    Ok((target, size))
+}
+
+/// Playlist index the transport should start when nothing is loaded: the
+/// highlighted entry, then the one Stop interrupted, then the first entry.
+fn playlist_play_index(
+    selection: Option<usize>,
+    stopped: Option<usize>,
+    len: usize,
+) -> Option<usize> {
+    if len == 0 {
+        return None;
+    }
+    selection
+        .filter(|index| *index < len)
+        .or_else(|| stopped.filter(|index| *index < len))
+        .or(Some(0))
+}
+
+/// Display name of a MIDI reset command.
+fn midi_reset_name(reset: MidiReset) -> String {
+    match reset {
+        MidiReset::Gm => tr("GM Reset"),
+        MidiReset::Gs => tr("GS Reset"),
+        MidiReset::Xg => tr("XG Reset"),
+        MidiReset::Roland => tr("Roland Reset"),
+        MidiReset::SoundFont => tr("SoundFont Reset"),
+    }
+}
+
+/// Display name of a key-change mode.
+fn transpose_mode_name(mode: TransposeMode) -> String {
+    match mode {
+        TransposeMode::All => tr("All Tuner"),
+        TransposeMode::Wolf => tr("Wolf Tuner"),
+        TransposeMode::Recovery => tr("Recovery Tuner"),
+    }
+}
+
+/// Human readable byte count for the database size readout.
+fn format_bytes(bytes: u64) -> String {
+    const KIB: f64 = 1024.0;
+    const MIB: f64 = KIB * 1024.0;
+    let value = bytes as f64;
+    if value >= MIB {
+        format!("{:.1} MB", value / MIB)
+    } else if value >= KIB {
+        format!("{:.0} KB", value / KIB)
+    } else {
+        format!("{bytes} B")
+    }
+}
+
+fn ensure_program_folders() {
+    for name in ["NCN", "KMID", "KAR"] {
+        if let Some(path) = program_folder(name) {
+            let _ = std::fs::create_dir_all(path);
+        }
+    }
+}
+
+fn effective_song_folder(configured: Option<&Path>, default_name: &str) -> Option<PathBuf> {
+    configured
+        .map(Path::to_path_buf)
+        .or_else(|| program_folder(default_name))
+}
+
 fn run_dialog(kind: DialogKind) -> Option<Vec<PathBuf>> {
     match kind {
         DialogKind::Open => rfd::FileDialog::new()
@@ -4260,6 +8347,10 @@ fn run_dialog(kind: DialogKind) -> Option<Vec<PathBuf>> {
             .set_file_name("playlist.json")
             .save_file()
             .map(|path| vec![path]),
+        DialogKind::BackgroundImage => rfd::FileDialog::new()
+            .add_filter("Image", &["png", "jpg", "jpeg"])
+            .pick_file()
+            .map(|path| vec![path]),
         DialogKind::SoundFont => rfd::FileDialog::new()
             .add_filter(&tr("SoundFont"), &["sf2"])
             .pick_file()
@@ -4267,6 +8358,13 @@ fn run_dialog(kind: DialogKind) -> Option<Vec<PathBuf>> {
         DialogKind::LyricFont => rfd::FileDialog::new()
             .add_filter(&tr("Font"), &["ttf", "otf"])
             .pick_file()
+            .map(|path| vec![path]),
+        DialogKind::NcnFolder
+        | DialogKind::KmidFolder
+        | DialogKind::KarFolder
+        | DialogKind::ImportFolder => rfd::FileDialog::new()
+            .set_title(tr("Choose folder"))
+            .pick_folder()
             .map(|path| vec![path]),
     }
 }
@@ -4290,6 +8388,118 @@ fn percent_row(ui: &mut egui::Ui, label: &str, scale: &mut f32, min: f32, max: f
         );
         if response.changed() {
             *scale = percent / 100.0;
+            changed = true;
+        }
+    });
+    changed
+}
+
+/// GM bass programs offered by the bass lock (1-based, as players show them).
+const BASS_PROGRAMS: [(u32, &str); 8] = [
+    (33, "33 Acoustic Bass"),
+    (34, "34 Electric Bass (finger)"),
+    (35, "35 Electric Bass (pick)"),
+    (36, "36 Fretless Bass"),
+    (37, "37 Slap Bass 1"),
+    (38, "38 Slap Bass 2"),
+    (39, "39 Synth Bass 1"),
+    (40, "40 Synth Bass 2"),
+];
+
+/// The nine GM2 drum kits, shown by GM2 kit number. `midi_options` converts
+/// them to the zero-based program numbers the synthesizer expects, so
+/// "25 Electronic" selects program 24.
+const DRUM_KITS: [(u32, &str); 9] = [
+    (1, "1 Standard"),
+    (9, "9 Room"),
+    (17, "17 Power"),
+    (25, "25 Electronic"),
+    (26, "26 TR-808"),
+    (33, "33 Jazz"),
+    (41, "41 Brush"),
+    (49, "49 Orchestra"),
+    (57, "57 SFX"),
+];
+
+const KICK_NOTES: [(u32, &str); 2] = [(35, "35 Acoustic Bass Drum"), (36, "36 Bass Drum 1")];
+
+const SNARE_NOTES: [(u32, &str); 4] = [
+    (31, "31 Drum Sticks"),
+    (34, "34 Metronome Bell"),
+    (38, "38 Acoustic Snare"),
+    (40, "40 Electric Snare"),
+];
+
+/// Move the current row's cursor to `offset` px from the row's left edge.
+fn pad_to(ui: &mut egui::Ui, row_left: f32, offset: f32) {
+    let target = row_left + offset;
+    let current = ui.cursor().min.x;
+    if target > current {
+        ui.add_space(target - current);
+    }
+}
+
+/// Checkbox plus a fixed-choice combo, for the MIDI voice locks.
+fn lock_row(
+    ui: &mut egui::Ui,
+    label: &str,
+    enabled: &mut bool,
+    value: &mut u32,
+    options: &[(u32, &str)],
+) -> bool {
+    let mut changed = false;
+    ui.horizontal(|ui| {
+        ui.spacing_mut().item_spacing.x = 0.0;
+        let left = ui.max_rect().left();
+        pad_to(ui, left, 30.0);
+        changed |= ui
+            .add(egui::Checkbox::new(
+                enabled,
+                RichText::new(label).size(12.0),
+            ))
+            .changed();
+        pad_to(ui, left, 163.0);
+        let selected = options
+            .iter()
+            .find(|(number, _)| number == value)
+            .map(|(_, name)| *name)
+            .unwrap_or("--");
+        ui.add_enabled_ui(*enabled, |ui| {
+            // Every lock box is exactly the same width: the selected text is
+            // truncated instead of widening the button.
+            ui.scope(|ui| {
+                ui.set_max_width(180.0);
+                egui::ComboBox::from_id_salt(label)
+                    .width(180.0)
+                    .selected_text(selected)
+                    .truncate()
+                    .show_ui(ui, |ui| {
+                        for (number, name) in options {
+                            if ui.selectable_value(value, *number, *name).changed() {
+                                changed = true;
+                            }
+                        }
+                    });
+            });
+        });
+    });
+    changed
+}
+
+/// A note-number row (0-127) for the metronome.
+fn note_row(ui: &mut egui::Ui, label: &str, value: &mut u32) -> bool {
+    let mut changed = false;
+    ui.horizontal(|ui| {
+        ui.spacing_mut().item_spacing.x = 0.0;
+        let left = ui.max_rect().left();
+        pad_to(ui, left, 17.0);
+        ui.label(RichText::new(label).size(12.0));
+        pad_to(ui, left, 103.0);
+        let response = ui.add_sized(
+            [47.0, 24.0],
+            egui::DragValue::new(value).range(0..=127).speed(1.0),
+        );
+        if response.changed() {
             changed = true;
         }
     });
@@ -4329,6 +8539,65 @@ fn check_row(ui: &mut egui::Ui, label: &str, value: &mut bool) -> bool {
 /// All rows share the same width, so the labels line up and the hover
 /// highlight covers the whole menu consistently.
 /// The "Song Player" flyout of the central context menu.
+/// Flyout listing the MIDI outputs, with the active one marked.
+fn midi_out_submenu(
+    ctx: &egui::Context,
+    pos: Pos2,
+    alpha: f32,
+    current: &str,
+    ports: &[String],
+) -> (Option<MenuAction>, Rect) {
+    const WIDTH: f32 = 250.0;
+    let height = 30.0 * (ports.len() + 2) as f32 + 16.0;
+    let screen = ctx.content_rect();
+    let pos = Pos2::new(
+        pos.x.min(screen.right() - WIDTH).max(screen.left()),
+        pos.y.min(screen.bottom() - height).max(screen.top()),
+    );
+
+    let mut action = None;
+    let area = egui::Area::new(egui::Id::unique("midi_out_submenu"))
+        .order(egui::Order::Foreground)
+        .fixed_pos(pos)
+        .show(ctx, |ui| {
+            let fill = Color32::from_rgba_unmultiplied(8, 8, 8, (255.0 * alpha) as u8);
+            let stroke = Color32::from_rgba_unmultiplied(70, 70, 70, (255.0 * alpha) as u8);
+            egui::Frame::NONE
+                .fill(fill)
+                .stroke(egui::Stroke::new(1.0, stroke))
+                .corner_radius(egui::CornerRadius::same(6))
+                .inner_margin(egui::Margin::symmetric(6, 6))
+                .show(ui, |ui| {
+                    ui.spacing_mut().item_spacing = egui::vec2(0.0, 2.0);
+                    ui.set_opacity(alpha);
+                    ui.set_width(WIDTH - 12.0);
+                    let internal = if current.is_empty() {
+                        format!("\u{2022} {}", tr("RustySynth SoundFont"))
+                    } else {
+                        tr("RustySynth SoundFont")
+                    };
+                    if menu_item(ui, Icon::Music, &internal) {
+                        action = Some(MenuAction::SetMidiOut(String::new()));
+                    }
+                    ui.separator();
+                    if ports.is_empty() {
+                        ui.label(RichText::new(tr("No MIDI outputs")).size(11.0).color(DIM));
+                    }
+                    for port in ports {
+                        let label = if current == *port {
+                            format!("\u{2022} {port}")
+                        } else {
+                            port.clone()
+                        };
+                        if menu_item(ui, Icon::AudioLines, &label) {
+                            action = Some(MenuAction::SetMidiOut(port.clone()));
+                        }
+                    }
+                });
+        });
+    (action, area.response.rect)
+}
+
 fn song_player_submenu(
     ctx: &egui::Context,
     pos: Pos2,
@@ -4410,12 +8679,25 @@ fn menu_item_response(ui: &mut egui::Ui, icon: Icon, label: &str) -> egui::Respo
     } else {
         visuals.widgets.noninteractive.fg_stroke.color
     };
-    if response.hovered() || response.has_focus() {
-        ui.painter()
-            .rect_filled(rect, 4.0, visuals.widgets.hovered.weak_bg_fill);
-    }
 
     let painter = ui.painter();
+    let galley = painter.layout_no_wrap(label.to_owned(), FontId::proportional(13.0), text_color);
+    let text_rect = Rect::from_min_size(
+        Pos2::new(rect.left() + 28.0, rect.center().y - galley.size().y * 0.5),
+        galley.size(),
+    );
+    if response.hovered() || response.has_focus() {
+        // The highlight follows the label instead of filling the whole row.
+        let highlight = Rect::from_min_max(
+            Pos2::new(rect.left() + 2.0, rect.top()),
+            Pos2::new(
+                (text_rect.right() + 8.0).min(rect.right() - 2.0),
+                rect.bottom(),
+            ),
+        );
+        painter.rect_filled(highlight, 4.0, visuals.widgets.hovered.weak_bg_fill);
+    }
+
     icons::paint(
         painter,
         Pos2::new(rect.left() + 15.0, rect.center().y),
@@ -4423,13 +8705,7 @@ fn menu_item_response(ui: &mut egui::Ui, icon: Icon, label: &str) -> egui::Respo
         16.0,
         text_color,
     );
-    painter.text(
-        Pos2::new(rect.left() + 28.0, rect.center().y),
-        egui::Align2::LEFT_CENTER,
-        label,
-        FontId::proportional(13.0),
-        text_color,
-    );
+    painter.galley(text_rect.min, galley, text_color);
 
     response
 }
@@ -4536,6 +8812,18 @@ fn font_style_label(value: FontStyle) -> String {
     }
 }
 
+/// Key shown for a search hit. The song that is currently playing follows the
+/// transpose; every other row keeps the key stored with its file.
+fn hit_key(key: &str, path: &Path, current: Option<&Path>, transpose: i32) -> String {
+    let key = key.trim();
+    let key = if key.is_empty() { "C" } else { key };
+    if current == Some(path) {
+        sounding_key(key, transpose)
+    } else {
+        key.to_owned()
+    }
+}
+
 /// Text shown in the key box next to the song info. The offset is not shown
 /// here: the box only displays the sounding key.
 fn key_label(key: &str, transpose: i32) -> String {
@@ -4606,10 +8894,15 @@ fn card_bpm(adjust: i32, current: f64) -> String {
     bpm_text(adjust, current, false)
 }
 
+/// Transpose a key name such as `G`, `F#m` or `Bbm`.
+///
+/// Only the note is moved: whatever follows it is kept verbatim, so untidy
+/// keys found in real files (`Bdm`, `Bm7`, `(Am)`, `C major`) still change
+/// with the transpose instead of staying frozen on screen.
 fn transposed_key(key: &str, transpose: i32) -> Option<String> {
-    let (pitch, minor) = parse_key(key)?;
+    let (pitch, suffix) = split_key(key)?;
     if transpose == 0 {
-        return Some(key.to_owned());
+        return Some(key.trim().to_owned());
     }
 
     const SHARPS: [&str; 12] = [
@@ -4621,17 +8914,17 @@ fn transposed_key(key: &str, transpose: i32) -> Option<String> {
 
     let names = if transpose > 0 { SHARPS } else { FLATS };
     let index = (pitch as i32 + transpose).rem_euclid(12) as usize;
-    let mut name = names[index].to_owned();
-    if minor {
-        name.push('m');
-    }
-    Some(name)
+    Some(format!("{}{suffix}", names[index]))
 }
 
-/// Parse a key line such as `G`, `F#m` or `Bbm` into a pitch class (C = 0)
-/// and whether it is minor. Returns `None` for anything else.
-fn parse_key(key: &str) -> Option<(u8, bool)> {
-    let mut chars = key.trim().chars();
+/// Split a key into its pitch class (C = 0) and the text that follows the
+/// note, so `Bdm` becomes `(11, "dm")`. Returns `None` when the text does not
+/// start with a note.
+fn split_key(key: &str) -> Option<(u8, String)> {
+    let trimmed = key.trim();
+    // Some files wrap the key in brackets: `(Am)`.
+    let core = trimmed.trim_matches(|ch: char| ch.is_whitespace() || "()[]{}".contains(ch));
+    let mut chars = core.chars();
     let letter = chars.next()?.to_ascii_uppercase();
     let base: i32 = match letter {
         'C' => 0,
@@ -4644,8 +8937,7 @@ fn parse_key(key: &str) -> Option<(u8, bool)> {
         _ => return None,
     };
 
-    let rest: String = chars.collect();
-    let rest = rest.trim_start();
+    let rest = chars.as_str();
     let (accidental, rest) = if let Some(rest) = rest.strip_prefix('#') {
         (1, rest)
     } else if let Some(rest) = rest.strip_prefix('♯') {
@@ -4658,13 +8950,7 @@ fn parse_key(key: &str) -> Option<(u8, bool)> {
         (0, rest)
     };
 
-    let minor = match rest.trim() {
-        "" => false,
-        "m" => true,
-        _ => return None,
-    };
-
-    Some(((base + accidental).rem_euclid(12) as u8, minor))
+    Some(((base + accidental).rem_euclid(12) as u8, rest.to_owned()))
 }
 
 fn display_field(ui: &mut egui::Ui, text: &str, width: f32) {
@@ -4717,7 +9003,7 @@ fn background_color_row(ui: &mut egui::Ui, hex: &mut String) -> bool {
     let mut changed = false;
     ui.horizontal(|ui| {
         if ui
-            .add_sized([120.0, 24.0], egui::TextEdit::singleline(hex))
+            .add_sized([140.0, 24.0], egui::TextEdit::singleline(hex))
             .changed()
         {
             changed = true;
@@ -4732,7 +9018,7 @@ fn background_color_row(ui: &mut egui::Ui, hex: &mut String) -> bool {
 }
 
 /// Bordered preview containing one monitor per common aspect ratio.
-fn background_preview(ui: &mut egui::Ui, color: Color32) {
+fn background_preview(ui: &mut egui::Ui, color: Color32, image: Option<&egui::TextureHandle>) {
     egui::Frame::NONE
         .fill(BG)
         .stroke(egui::Stroke::new(1.0, Color32::from_gray(70)))
@@ -4745,13 +9031,20 @@ fn background_preview(ui: &mut egui::Ui, color: Color32) {
         })
         .show(ui, |ui| {
             ui.set_width(240.0);
-            preview_monitor(ui, "4:3", 4.0 / 3.0, color, 156.0);
+            preview_monitor(ui, "4:3", 4.0 / 3.0, color, 156.0, image);
             ui.add_space(8.0);
-            preview_monitor(ui, "16:9", 16.0 / 9.0, color, 200.0);
+            preview_monitor(ui, "16:9", 16.0 / 9.0, color, 200.0, image);
         });
 }
 
-fn preview_monitor(ui: &mut egui::Ui, label: &str, aspect: f32, color: Color32, width: f32) {
+fn preview_monitor(
+    ui: &mut egui::Ui,
+    label: &str,
+    aspect: f32,
+    color: Color32,
+    width: f32,
+    image: Option<&egui::TextureHandle>,
+) {
     let height = (width / aspect).round();
     let label_height = 20.0;
     let full_width = ui.available_width().max(width);
@@ -4777,12 +9070,57 @@ fn preview_monitor(ui: &mut egui::Ui, label: &str, aspect: f32, color: Color32, 
         egui::vec2(width, height),
     );
     painter.rect_filled(screen, 2.0, color);
+    if let Some(texture) = image {
+        paint_cover(&painter, screen, texture);
+    }
     painter.rect_stroke(
         screen,
         2.0,
         egui::Stroke::new(1.5, FG),
         egui::StrokeKind::Inside,
     );
+}
+
+/// Decode a .png/.jpg file into an egui image.
+fn load_background_image(path: &Path) -> anyhow::Result<egui::ColorImage> {
+    let bytes = std::fs::read(path).with_context(|| format!("reading {}", path.display()))?;
+    load_background_bytes(&bytes)
+}
+
+/// Decode PNG/JPEG bytes into an egui image.
+fn load_background_bytes(bytes: &[u8]) -> anyhow::Result<egui::ColorImage> {
+    let decoded = image::load_from_memory(bytes).context("decoding the image")?;
+    let rgba = decoded.to_rgba8();
+    let size = [rgba.width() as usize, rgba.height() as usize];
+    Ok(egui::ColorImage::from_rgba_unmultiplied(
+        size,
+        rgba.as_raw(),
+    ))
+}
+
+/// Draw `texture` over `rect`, cropping the overflow so it keeps its aspect
+/// ratio while covering the whole area.
+fn paint_cover(painter: &egui::Painter, rect: Rect, texture: &egui::TextureHandle) {
+    let size = texture.size_vec2();
+    if size.x <= 0.0 || size.y <= 0.0 || rect.width() <= 0.0 || rect.height() <= 0.0 {
+        return;
+    }
+    let image_aspect = size.x / size.y;
+    let rect_aspect = rect.width() / rect.height();
+    let uv = if image_aspect > rect_aspect {
+        let width = rect_aspect / image_aspect;
+        Rect::from_min_max(
+            Pos2::new(0.5 - width * 0.5, 0.0),
+            Pos2::new(0.5 + width * 0.5, 1.0),
+        )
+    } else {
+        let height = image_aspect / rect_aspect;
+        Rect::from_min_max(
+            Pos2::new(0.0, 0.5 - height * 0.5),
+            Pos2::new(1.0, 0.5 + height * 0.5),
+        )
+    };
+    painter.image(texture.id(), rect, uv, Color32::WHITE);
 }
 
 fn parse_hex(value: &str) -> Option<[u8; 3]> {
@@ -5449,6 +9787,16 @@ mod tests {
     }
 
     #[test]
+    fn search_hit_key_follows_the_transpose_only_for_the_playing_song() {
+        let playing = Path::new("C:/Songs/1001.mid");
+        let other = Path::new("C:/Songs/2002.mid");
+        assert_eq!(hit_key("Dm", playing, Some(playing), 3), "Fm");
+        assert_eq!(hit_key("Dm", other, Some(playing), 3), "Dm");
+        assert_eq!(hit_key("", playing, Some(playing), 0), "C");
+        assert_eq!(hit_key("Dm", playing, None, 3), "Dm");
+    }
+
+    #[test]
     fn bpm_adjustment_is_a_constant_offset() {
         assert_eq!(adjusted_bpm(90.0, 10), 100.0);
         assert_eq!(adjusted_bpm(132.0, 10), 142.0);
@@ -5475,6 +9823,21 @@ mod tests {
     }
 
     #[test]
+    fn play_button_starts_the_expected_playlist_entry() {
+        // Nothing highlighted or stopped: start at the top.
+        assert_eq!(playlist_play_index(None, None, 3), Some(0));
+        // The highlighted entry wins over everything else.
+        assert_eq!(playlist_play_index(Some(2), Some(1), 3), Some(2));
+        // After Stop nothing is highlighted, so replay what was interrupted.
+        assert_eq!(playlist_play_index(None, Some(1), 3), Some(1));
+        // Out-of-range values fall back to the first entry.
+        assert_eq!(playlist_play_index(Some(9), Some(8), 3), Some(0));
+        // An empty playlist has nothing to start.
+        assert_eq!(playlist_play_index(None, None, 0), None);
+        assert_eq!(playlist_play_index(Some(0), Some(0), 0), None);
+    }
+
+    #[test]
     fn transposed_keys_use_sharps_up_and_flats_down() {
         assert_eq!(key_with_offset("G", 0), "G [0]");
         assert_eq!(key_with_offset("G", 3), "A# [+3]");
@@ -5489,11 +9852,17 @@ mod tests {
     }
 
     #[test]
-    fn unknown_keys_keep_their_spelling_with_the_offset() {
+    fn untidy_keys_still_follow_the_transpose() {
+        // A key that does not start with a note is left alone.
         assert_eq!(key_with_offset("?", 3), "? [+3]");
-        assert_eq!(key_with_offset("C major", 1), "C major [+1]");
-        assert_eq!(parse_key("H"), None);
-        assert_eq!(parse_key("C7"), None);
+        assert_eq!(key_with_offset("H", 1), "H [+1]");
+        // Notes with extra text keep it, but the root moves.
+        assert_eq!(key_with_offset("C major", 1), "C# major [+1]");
+        assert_eq!(key_with_offset("Bdm", 3), "Ddm [+3]");
+        assert_eq!(key_with_offset("Bm7", 2), "C#m7 [+2]");
+        assert_eq!(key_with_offset("(Am)", 2), "Bm [+2]");
+        assert_eq!(split_key("H"), None);
+        assert_eq!(split_key("( Bm )"), Some((11, "m".to_owned())));
     }
 
     #[test]
@@ -5528,5 +9897,52 @@ mod tests {
         assert_eq!(app.playlist, vec![sample]);
 
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn import_copy_reports_the_files_it_wrote() {
+        let dir = std::env::temp_dir().join(format!("karaoke-import-copy-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).expect("create temp dir");
+        let source = dir.join("source.mid");
+        std::fs::write(&source, b"MThd").expect("write source");
+
+        let record = SongRecord {
+            code: "9001".to_owned(),
+            format: "kmid".to_owned(),
+            path: source,
+            file_name: "source.mid".to_owned(),
+            title: "Test".to_owned(),
+            artist: "Artist".to_owned(),
+            key: Some("C".to_owned()),
+            tempo: None,
+            bars: None,
+            duration_ms: 0,
+            language: None,
+            vocal_channel: None,
+            year: None,
+            creator: None,
+            lyr_preview: None,
+            file_size: 4,
+            modified_at: 0,
+            missing: true,
+        };
+        let destination = dir.join("out");
+        let (copied, files) = import_copy(&record, &destination).expect("copy");
+        assert_eq!(copied.path, destination.join("9001.mid"));
+        assert_eq!(files, vec![destination.join("9001.mid")]);
+        assert!(files[0].is_file());
+        assert!(!copied.missing);
+
+        // A second add must not overwrite the copied song.
+        assert!(import_copy(&record, &destination).is_err());
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn formats_database_sizes() {
+        assert_eq!(format_bytes(512), "512 B");
+        assert_eq!(format_bytes(2048), "2 KB");
+        assert_eq!(format_bytes(1024 * 1024 * 3 / 2), "1.5 MB");
     }
 }

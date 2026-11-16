@@ -22,16 +22,38 @@ pub struct LoadOptions {
 
 /// Load any supported song file and normalise it into a [`Song`].
 ///
-/// `.kar` is always KAR. A `.mid` is treated as KMID when it carries an
-/// embedded `LyrHdr` lyric payload, then as NCN when `Lyrics/` and `Cursor/`
-/// siblings can be found, and otherwise as an ordinary MIDI/KAR file.
+/// `.kar` is always KAR. For a `.mid`, the NCN `.mid/.lyr/.cur` trio wins
+/// when its companions can be found; otherwise a file with an embedded
+/// `LyrHdr` payload is KMID, and anything left is an ordinary MIDI/KAR file.
 pub fn load(path: &Path, opts: &LoadOptions) -> Result<Song> {
     let bytes = std::fs::read(path).with_context(|| format!("reading {}", path.display()))?;
     let doc = midi::parse(&bytes, opts.encoding)
         .with_context(|| format!("parsing MIDI data in {}", path.display()))?;
 
+    let forced_ncn = opts.format == Some(SourceFormat::Ncn);
     let forced_kmid = opts.format == Some(SourceFormat::Kmid);
     let forced_midi = opts.format == Some(SourceFormat::Midi);
+    let extension = path
+        .extension()
+        .map(|e| e.to_string_lossy().to_ascii_lowercase())
+        .unwrap_or_default();
+
+    // A complete NCN trio is the strongest signal. Some collections keep the
+    // embedded KMID payload in the .mid as well as the .lyr/.cur companions;
+    // in that case the author expects the song to be treated as NCN.
+    if forced_ncn || (opts.format.is_none() && extension != "kar") {
+        match ncn::locate(path, opts) {
+            Some((lyr, cur)) => return ncn::build(path, doc, &lyr, &cur, opts.encoding),
+            None if forced_ncn => {
+                bail!(
+                    "could not find the .lyr/.cur companions of {}",
+                    path.display()
+                )
+            }
+            None => {}
+        }
+    }
+
     if !matches!(
         opts.format,
         Some(SourceFormat::Kar | SourceFormat::Ncn | SourceFormat::Midi)
@@ -56,29 +78,6 @@ pub fn load(path: &Path, opts: &LoadOptions) -> Result<Song> {
                 eprintln!("kmid: {err:#} ({} will play as plain MIDI)", path.display());
             }
         }
-    }
-
-    let extension = path
-        .extension()
-        .map(|e| e.to_string_lossy().to_ascii_lowercase())
-        .unwrap_or_default();
-
-    let is_ncn = match opts.format {
-        Some(SourceFormat::Kar) => false,
-        Some(SourceFormat::Ncn) => true,
-        Some(SourceFormat::Kmid) => false,
-        Some(SourceFormat::Midi) => false,
-        None => extension != "kar" && !doc.has_lyrics && ncn::locate(path, opts).is_some(),
-    };
-
-    if is_ncn {
-        let (lyr, cur) = ncn::locate(path, opts).with_context(|| {
-            format!(
-                "could not find the .lyr/.cur companions of {}",
-                path.display()
-            )
-        })?;
-        return ncn::build(path, doc, &lyr, &cur, opts.encoding);
     }
 
     let has_kar_marker = doc.text_events.iter().any(|event| {

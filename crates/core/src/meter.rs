@@ -156,6 +156,38 @@ impl MeterMap {
         }
     }
 
+    /// Tick length of one beat in the signature active at `tick`.
+    pub fn beat_ticks_at(&self, tick: u64) -> u64 {
+        let mut current = TimeSignatureChange {
+            tick: 0,
+            numerator: 4,
+            denominator: 4,
+        };
+        for change in &self.changes {
+            if change.tick > tick {
+                break;
+            }
+            current = *change;
+        }
+        self.beat_ticks(&current)
+    }
+
+    /// Beats per bar in the signature active at `tick`.
+    pub fn beats_per_bar_at(&self, tick: u64) -> u64 {
+        let mut current = TimeSignatureChange {
+            tick: 0,
+            numerator: 4,
+            denominator: 4,
+        };
+        for change in &self.changes {
+            if change.tick > tick {
+                break;
+            }
+            current = *change;
+        }
+        u64::from(current.numerator.max(1))
+    }
+
     fn beat_ticks(&self, signature: &TimeSignatureChange) -> u64 {
         let denominator = u64::from(signature.denominator.max(1));
         (u64::from(self.division) * 4 / denominator).max(1)

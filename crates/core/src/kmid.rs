@@ -126,7 +126,8 @@ struct KmidData {
     key: Option<String>,
     language: Option<String>,
     creator: Option<String>,
-    year: Option<String>,
+    year: Option<i32>,
+    vocal_channel: Option<u8>,
     time_format: String,
     /// One entry per line, each holding `(text, start_us)` pairs.
     lines: Vec<Vec<(String, u64)>>,
@@ -205,7 +206,14 @@ fn parse_xml(xml: &str, doc: &MidiDoc) -> Result<KmidData> {
         key: field("KEY"),
         language: field("LANGUAGE"),
         creator: field("CREATOR"),
-        year: field("YEAR"),
+        year: field("YEAR").and_then(|value| value.trim().parse().ok()),
+        vocal_channel: field("VOCAL_CHANNEL").and_then(|value| {
+            if value.is_empty() || value.eq_ignore_ascii_case("NONE") {
+                None
+            } else {
+                value.trim().parse().ok()
+            }
+        }),
         time_format,
         lines,
     })
@@ -215,7 +223,7 @@ fn build(doc: &MidiDoc, data: KmidData) -> Song {
     let lyric_lines = build_lines(data.lines, doc.duration_us);
 
     let mut info = vec!["KMID (embedded @LYRIC)".to_owned()];
-    if let Some(creator) = data.creator {
+    if let Some(creator) = &data.creator {
         info.push(format!("creator: {creator}"));
     }
     if let Some(year) = data.year {
@@ -242,6 +250,9 @@ fn build(doc: &MidiDoc, data: KmidData) -> Song {
         track_count: doc.track_count,
         events: doc.events.clone(),
         lyric_lines,
+        vocal_channel: data.vocal_channel,
+        year: data.year,
+        creator: data.creator,
     }
 }
 

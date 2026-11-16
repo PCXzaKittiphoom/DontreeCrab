@@ -5,7 +5,7 @@ in Rust with `eframe`/`egui` and `rustysynth`.
 
 [GitHub repository](https://github.com/PCXzaKittiphoom/DontreeCrab)
 
-> **Status:** 0.1.1 Beta
+> **Status:** 0.1.2
 
 DontreeCrab focuses on accurate lyric timing, Thai karaoke conventions, a clean
 monochrome interface, and offline playback. It does not collect telemetry and
@@ -27,6 +27,14 @@ does not need a network connection.
 - Key transposition with chord-aware display (`G [0]` → `A# [+3]`).
 - Playlist, drag & drop, auto-advance, repeat, musical interval and JSON
   import/export.
+- Song search popup: type to search the library by code, title, artist or
+  lyrics, browse with `←`/`→` and press `Enter` to play.
+- SQLite song database with folder scanning, incremental rescans, missing-file
+  checks, backups and a compact action.
+- External MIDI output: the built-in SoundFont or any MIDI port on the machine,
+  with per-channel routing in the **Split MIDI** window.
+- Voice locks (bass, drum kit, kick, snare) and a metronome with configurable
+  notes.
 - Volume, BPM, font and UI-zoom readouts.
 - Runtime translations from GNU gettext `.po` files (English and Thai included).
 - Window/file associations on Windows.
@@ -35,6 +43,8 @@ does not need a network connection.
 - Fullscreen state that is remembered between launches.
 - About page with version, credits, GitHub link, MIT licence and a build/credits
   popup.
+- Background behind the lyrics: the artwork shipped with the player, a flat
+  colour, or an external `.png`/`.jpg` scaled to the window.
 
 ## Requirements
 
@@ -96,7 +106,7 @@ created for the test suite. They are not real songs.
 | `F6` | stop and unload the current song |
 | `F7` / `F8` | previous / next bar (`BACK <<<` / `NEXT >>>`) |
 | `Space` | show the song card when Song info is off and the playlist is closed |
-| `Esc` | dismiss the song card, then close the playlist |
+| `Esc` | close the search popup or open menu, then dismiss the song card and close the playlist |
 | `Ctrl+,` / `Ctrl+.` | transpose −1 / +1 |
 | `Ctrl+;` / `Ctrl+'` | BPM −1 / +1 |
 | `Ctrl+\` | mute / unmute the melody channel |
@@ -107,8 +117,9 @@ created for the test suite. They are not real songs.
 | `Delete` | remove the highlighted or current playlist entry |
 
 Right-click the lyrics for **Song Player** (open/add files, add folder,
-import/export playlist, repeat, clear), fullscreen, minimize, cursor visibility,
-playlist visibility, settings and exit.
+import/export playlist, repeat, clear), **Song Data**, **Split MIDI**,
+**MIDI Out**, fullscreen, minimize, cursor visibility, playlist visibility,
+settings, about and exit.
 
 The playlist is also a drop target for `.kar`, `.mid` and `.midi` files.
 
@@ -118,11 +129,17 @@ Open Settings from the right-click menu. The pages are:
 
 - **General** — readout/playlist display durations, top-bar visibility, language.
 - **Text** — lyric font size, outline, distance, visibility, style and colours.
+- **MIDI** — output port, SysEx, MIDI reset, voice locks, metronome and the
+  Split MIDI window.
 - **SoundFont** — active SoundFont, polyphony (8–256), buffer (0 = driver
   default, or 10–100 ms), equalizer and MIDI effect sends.
 - **Player** — delete played songs, play immediately, auto-play and musical
-  interval.
-- **Background** — background colour and a 4:3 / 16:9 preview.
+  interval (all on by default).
+- **Background** — the shipped artwork, a colour, or an image file, with a
+  4:3 / 16:9 preview.
+- **Song Data** — the SQLite song database, folder list, scanning, missing-file
+  checks and backups.
+- **About** — version, credits, licence and third-party notices.
 
 Settings are stored in the platform config directory (`%APPDATA%\DontreeCrab\
 DontreeCrab\config\settings.json` on Windows).

@@ -29,11 +29,14 @@ pub enum Icon {
     Upload,
     Repeat2,
     Trash2,
+    SkipBack,
+    SkipForward,
     AudioLines,
     Image,
     Type,
     Info,
     ExternalLink,
+    Database,
 }
 
 impl Icon {
@@ -60,11 +63,14 @@ impl Icon {
             Self::Upload => "\u{e19e}",
             Self::Repeat2 => "\u{e411}",
             Self::Trash2 => "\u{e18e}",
+            Self::SkipBack => "\u{e15f}",
+            Self::SkipForward => "\u{e160}",
             Self::AudioLines => "\u{e55a}",
             Self::Image => "\u{e0f6}",
             Self::Type => "\u{e198}",
             Self::Info => "\u{e0f9}",
             Self::ExternalLink => "\u{e0b9}",
+            Self::Database => "\u{e0ad}",
         }
     }
 

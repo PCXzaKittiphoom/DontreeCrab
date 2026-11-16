@@ -43,6 +43,10 @@ pub struct Song {
     pub events: Vec<TimedEvent>,
     /// Lyric lines, sorted by time, each with syllable-level timing.
     pub lyric_lines: Vec<LyricLine>,
+    /// Legacy KMID metadata: 1-based vocal channel, or `None`.
+    pub vocal_channel: Option<u8>,
+    pub year: Option<i32>,
+    pub creator: Option<String>,
 }
 
 impl Song {

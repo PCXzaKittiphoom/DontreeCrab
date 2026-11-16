@@ -158,6 +158,33 @@ msgstr "พักระหว่างเพลง"
 msgid "Background Color"
 msgstr "สีพื้นหลัง"
 
+msgid "Color"
+msgstr "สี"
+
+msgid "Default"
+msgstr "ค่าเริ่มต้น"
+
+msgid "Shipped with the player"
+msgstr "ภาพที่มาพร้อมโปรแกรม"
+
+msgid "Image"
+msgstr "รูปภาพ"
+
+msgid "Background image"
+msgstr "รูปภาพพื้นหลัง"
+
+msgid "Choose image…"
+msgstr "เลือกรูปภาพ…"
+
+msgid "Remove"
+msgstr "ลบ"
+
+msgid "No image selected"
+msgstr "ยังไม่ได้เลือกรูปภาพ"
+
+msgid "Could not load the background image: {}"
+msgstr "โหลดรูปภาพพื้นหลังไม่สำเร็จ: {}"
+
 msgid "Preview monitor"
 msgstr "ตัวอย่างหน้าจอ"
 
@@ -279,7 +306,7 @@ msgid "Song"
 msgstr "เพลง"
 
 msgid "Artist"
-msgstr "ศิลปิน"
+msgstr "นักร้อง"
 
 msgid "BPM"
 msgstr "BPM"
@@ -472,3 +499,306 @@ msgstr "ข้อควรทราบ"
 
 msgid "DontreeCrab is only a MIDI player, intended for MIDI content that you create yourself or are otherwise entitled to use.\n\nWe do not support or accept any use of this codebase for reading, converting, playing, copying, or supporting commercial karaoke formats that are copy-protected or restricted by law, such as EMK & XMK (eXtreme Karaoke), SIB & SIBKL (SIB/SIBK Karaoke) and SMK & SMKL & SMD (Sonic Karaoke), or any program that decrypts or bypasses file protection to play, convert, copy or distribute song libraries without permission from the copyright owners.\n\nIssues and pull requests requesting such support will be rejected immediately. Anyone who uses or modifies this software for those purposes is solely responsible for their own actions; the developers and contributors accept no liability.\n\nThis software is provided \"as is\", without warranty, as stated in the MIT License. This notice is not legal advice; please check the laws in your country."
 msgstr "DontreeCrab เป็นเพียงโปรแกรมเล่น MIDI สำหรับใช้งานกับไฟล์ MIDI ที่คุณสร้างขึ้นเอง หรือมีสิทธิ์ใช้งานโดยชอบธรรมเท่านั้น\n\nเราไม่สนับสนุนและไม่ยอมรับการนำโค้ดของโปรแกรมนี้ไปใช้ผิดวัตถุประสงค์ในลักษณะใด ๆ โดยเฉพาะการอ่าน แปลง เล่น คัดลอก หรือรองรับฟอร์แมตคาราโอเกะเชิงพาณิชย์ที่มีระบบป้องกัน หรือมีข้อจำกัดทางกฎหมาย เช่น EMK & XMK (eXtreme Karaoke), SIB & SIBKL (SIB/SIBK Karaoke) และ SMK & SMKL & SMD (Sonic Karaoke) รวมถึงโปรแกรมใด ๆ ที่ใช้ถอดรหัสหรือหลบเลี่ยงระบบป้องกัน ของไฟล์ เพื่อเล่น แปลง คัดลอก หรือเผยแพร่คลังเพลงโดยไม่ได้รับอนุญาตจากเจ้าของลิขสิทธิ์\n\nIssue และ pull request ที่ขอให้รองรับการใช้งานดังกล่าวจะถูกปฏิเสธทันที ผู้ที่นำโค้ดไปใช้ หรือดัดแปลงเพื่อวัตถุประสงค์เหล่านี้ต้องรับผิดชอบการกระทำของตนเองแต่เพียงผู้เดียว ผู้พัฒนาและผู้มีส่วนร่วมจะไม่รับผิดชอบใด ๆ ทั้งสิ้น\n\nซอฟต์แวร์นี้ให้ไว้ “ตามสภาพ” (as is) โดยไม่มีการรับประกันใด ๆ ตามที่ระบุในสัญญาอนุญาต MIT ข้อความนี้ไม่ใช่คำแนะนำทางกฎหมาย โปรดตรวจสอบกฎหมายในประเทศของคุณ"
+
+msgid "Song Data"
+msgstr "ข้อมูลเพลง"
+
+msgid "Databases used"
+msgstr "ฐานข้อมูลที่ใช้"
+
+msgid "SQLite"
+msgstr "SQLite"
+
+msgid "dBase (Legacy)"
+msgstr "dBase (รุ่นเก่า)"
+
+msgid "Database file"
+msgstr "ไฟล์ฐานข้อมูล"
+
+msgid "Not selected"
+msgstr "ยังไม่ได้เลือก"
+
+msgid "Database file not found"
+msgstr "ไม่พบไฟล์ฐานข้อมูล"
+
+msgid "File type"
+msgstr "ประเภทไฟล์"
+
+msgid "Folder path"
+msgstr "ที่อยู่โฟลเดอร์"
+
+msgid "NCN MIDI"
+msgstr "NCN MIDI"
+
+msgid "KMID MIDI"
+msgstr "KMID MIDI"
+
+msgid "KAR MIDI"
+msgstr "KAR MIDI"
+
+msgid "Restore"
+msgstr "รีเซ็ต"
+
+msgid "Restore folder paths?"
+msgstr "รีเซ็ตที่อยู่โฟลเดอร์?"
+
+msgid "This resets folder paths to the default folders inside the program folder. Songs and the database are not deleted."
+msgstr "การดำเนินการนี้จะรีเซ็ตที่อยู่โฟลเดอร์ทั้งหมดกลับไปยังโฟลเดอร์เริ่มต้นภายในโฟลเดอร์โปรแกรม แต่จะไม่ลบเพลงหรือฐานข้อมูล"
+
+msgid "Choose folder"
+msgstr "เลือกโฟลเดอร์"
+
+msgid "No folder selected"
+msgstr "ยังไม่ได้เลือกโฟลเดอร์"
+
+msgid "Songs are indexed from these folders when you press Scan."
+msgstr "เพลงจะถูกเพิ่มเข้ารายการเมื่อกด Scan"
+
+msgid "Search"
+msgstr "ค้นหา"
+
+msgid "Add a song"
+msgstr "เพิ่มเพลง"
+
+msgid "Create a database"
+msgstr "สร้างฐานข้อมูล"
+
+msgid "Type"
+msgstr "ประเภท"
+
+msgid "No songs yet. Press Create a database."
+msgstr "ยังไม่มีเพลง กดสร้างฐานข้อมูลเพื่อเริ่มต้น"
+
+msgid "Choose at least one folder first"
+msgstr "กรุณาเลือกโฟลเดอร์อย่างน้อย 1 โฟลเดอร์"
+
+msgid "The database scan stopped unexpectedly"
+msgstr "การสแกนฐานข้อมูลหยุดทำงานกะทันหัน"
+
+msgid "Scanned {} songs ({} duplicates, {} skipped)"
+msgstr "สแกนได้ {} เพลง (ซ้ำ {} รายการ, ข้าม {} รายการ)"
+
+msgid "File not found"
+msgstr "ไม่พบไฟล์"
+
+msgid "{} songs · {} duplicates · {} skipped"
+msgstr "{} เพลง · ซ้ำ {} · ข้าม {}"
+
+msgid "All"
+msgstr "ทั้งหมด"
+
+msgid "Search songs"
+msgstr "ค้นหาเพลง"
+
+msgid "Code, song or artist"
+msgstr "รหัส ชื่อเพลง หรือนักร้อง"
+
+msgid "OK"
+msgstr "ตกลง"
+
+msgid "No songs match your search."
+msgstr "ไม่พบเพลงที่ตรงกับการค้นหา"
+
+msgid "Open"
+msgstr "เปิด"
+
+msgid "Add"
+msgstr "เพิ่ม"
+
+msgid "Select all"
+msgstr "เลือกทั้งหมด"
+
+msgid "Found {} songs"
+msgstr "พบ {} เพลง"
+
+msgid "Added {} songs ({} skipped)"
+msgstr "เพิ่ม {} เพลง (ข้าม {} รายการ)"
+
+msgid "Select at least one song"
+msgstr "กรุณาเลือกเพลงอย่างน้อย 1 เพลง"
+
+msgid "The folder scan stopped unexpectedly"
+msgstr "การสแกนโฟลเดอร์หยุดทำงานกะทันหัน"
+
+msgid "The import stopped unexpectedly"
+msgstr "การเพิ่มเพลงหยุดทำงานกะทันหัน"
+
+msgid "Open a folder to add songs."
+msgstr "เปิดโฟลเดอร์เพื่อเพิ่มเพลง"
+
+msgid "No songs match the filter."
+msgstr "ไม่พบเพลงที่ตรงกับตัวกรอง"
+
+msgid "Search lyrics"
+msgstr "ค้นหาเนื้อเพลง"
+
+msgid "No matching lyric"
+msgstr "ไม่พบเนื้อเพลงที่ค้นหา"
+
+msgid "No lyrics in this song"
+msgstr "เพลงนี้ไม่มีเนื้อเพลง"
+
+msgid "Type lyrics to find a song"
+msgstr "พิมพ์เนื้อเพลงเพื่อค้นหาเพลง"
+
+msgid "No songs match those lyrics"
+msgstr "ไม่พบเพลงที่ตรงกับเนื้อเพลง"
+
+msgid "Syncing lyrics"
+msgstr "กำลังซิงค์เนื้อเพลง"
+
+msgid "Enter to play"
+msgstr "กด Enter เพื่อเล่น"
+
+msgid "Type to find a song"
+msgstr "พิมพ์เพื่อค้นหาเพลง"
+
+msgid "Added to playlist"
+msgstr "เพิ่มลง Playlist แล้ว"
+
+msgid "Check missing"
+msgstr "ตรวจไฟล์หาย"
+
+msgid "Check missing files"
+msgstr "ตรวจไฟล์ที่หายไป"
+
+msgid "{} songs · {} unchanged · {} duplicates · {} skipped"
+msgstr "{} เพลง · คงเดิม {} · ซ้ำ {} · ข้าม {}"
+
+msgid "{} missing · {} restored"
+msgstr "หายไป {} · กลับมา {}"
+
+msgid "Compact"
+msgstr "กระชับ"
+
+msgid "Checking files…"
+msgstr "กำลังตรวจไฟล์…"
+
+msgid "Compacting…"
+msgstr "กำลังกระชับ…"
+
+msgid "Rebuild the database file and reclaim space"
+msgstr "สร้างไฟล์ฐานข้อมูลใหม่และคืนพื้นที่ว่าง"
+
+msgid "Database {} → {}"
+msgstr "ฐานข้อมูล {} → {}"
+
+msgid "Database check failed"
+msgstr "ตรวจฐานข้อมูลไม่ผ่าน"
+
+msgid "Backup"
+msgstr "สำรอง"
+
+msgid "Save a copy of the database to the backups folder"
+msgstr "บันทึกสำเนาฐานข้อมูลไว้ในโฟลเดอร์ backups"
+
+msgid "Backup saved ({})"
+msgstr "สำรองแล้ว ({})"
+
+msgid "Loading the library..."
+msgstr "กำลังโหลดคลังเพลง..."
+
+msgid "Search Popup"
+msgstr "Popup ค้นหา"
+
+msgid "Opacity"
+msgstr "ความทึบ"
+
+msgid "Size"
+msgstr "ขนาด"
+
+msgid "Position"
+msgstr "ตำแหน่ง"
+
+msgid "Auto"
+msgstr "อัตโนมัติ"
+
+msgid "Top"
+msgstr "ด้านบน"
+
+msgid "Bottom"
+msgstr "ด้านล่าง"
+
+msgid "No songs match that search"
+msgstr "??????????????????????????"
+
+msgid "MIDI"
+msgstr "มิดี้"
+
+msgid "MIDI Out"
+msgstr "มิดี้ขาออก"
+
+msgid "Lock bass voice"
+msgstr "ล็อคเสียงเบส"
+
+msgid "Lock drum kit"
+msgstr "ล็อคเสียงกลอง"
+
+msgid "Lock kick"
+msgstr "ล็อคเสียงกระเดื่อง"
+
+msgid "Lock snare"
+msgstr "ล็อคเสียงสแนร์"
+
+msgid "Reset MIDI"
+msgstr "คืนค่ามิดี้"
+
+msgid "Split MIDI"
+msgstr "แยกเสียงมิดี้"
+
+msgid "Metronome"
+msgstr "เมโทรนอม"
+
+msgid "Enable"
+msgstr "เปิดใช้งาน"
+
+msgid "First beat"
+msgstr "โน้ตจังหวะแรก"
+
+msgid "Other beats"
+msgstr "โน้ตจังหวะอื่น"
+
+msgid "Use a closed hi-hat (42) for every beat"
+msgstr "ใช้ไฮแฮท 42 Closed Hi-hat แทนโน้ตทุกจังหวะ"
+
+msgid "Change Key"
+msgstr "เปลี่ยนคีย์"
+
+msgid "MIDI Reset System"
+msgstr "ระบบคืนค่ามิดี้"
+
+msgid "MIDI RESET"
+msgstr "คืนค่ามิดี้"
+
+msgid "MIDI Channel"
+msgstr "ช่องสัญญาณ MIDI"
+
+msgid "Channel"
+msgstr "ช่อง"
+
+msgid "MIDI Output"
+msgstr "สัญญาณ MIDI ขาออก"
+
+msgid "Default Port"
+msgstr "พอร์ตเริ่มต้น"
+
+msgid "Reset to defaults"
+msgstr "ปรับค่าเริ่มต้น"
+
+msgid "Default Port: {}"
+msgstr "พอร์ตเริ่มต้น: {}"
+
+msgid "Click or drag to select channels"
+msgstr "คลิกหรือลากเมาส์เพื่อเลือกช่อง"
+
+msgid "Right-click to set MIDI Output"
+msgstr "คลิกขวาเพื่อกำหนดสัญญาณ MIDI ขาออก"
+
+msgid "No MIDI outputs"
+msgstr "ไม่พบอุปกรณ์ MIDI ขาออก"
+
+msgid "Refresh MIDI outputs"
+msgstr "ค้นหาอุปกรณ์ MIDI ใหม่"
+
+msgid "Could not open MIDI output: {}"
+msgstr "เปิดอุปกรณ์ MIDI ไม่สำเร็จ: {}"

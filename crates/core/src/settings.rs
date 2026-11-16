@@ -4,6 +4,55 @@ use anyhow::{Context, Result};
 use directories::ProjectDirs;
 use serde::{Deserialize, Serialize};
 
+/// How a key change (transpose) treats the notes that are already sounding.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum TransposeMode {
+    /// One command transposes every instrument except the drums, including
+    /// the notes that are already playing (Roland "All Tuner").
+    #[default]
+    All,
+    /// The same result, but the player sends one command per channel
+    /// ("Wolf Tuner").
+    Wolf,
+    /// Transpose only the notes that start after the change; sounding notes
+    /// are cut. Works with devices that ignore the bulk messages
+    /// ("Recovery Tuner").
+    Recovery,
+}
+
+/// MIDI reset command used before a song and by the "Reset MIDI" button.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum MidiReset {
+    /// General MIDI reset (`F0 7E 7F 09 01 F7`).
+    #[default]
+    Gm,
+    /// Roland GS reset (`F0 41 10 42 12 40 00 7F 00 41 F7`).
+    Gs,
+    /// Yamaha XG reset (`F0 43 10 4C 00 00 7E 00 F7`).
+    Xg,
+    /// Roland-specific reset: GS reset plus a controller reset.
+    Roland,
+    /// Software synthesizer: no SysEx, just the standard controllers
+    /// (CC120/121/123 and sustain off).
+    SoundFont,
+}
+
+impl MidiReset {
+    /// SysEx message this reset sends to an external device, if any.
+    pub fn sysex(self) -> Option<&'static [u8]> {
+        match self {
+            Self::Gm => Some(&[0xF0, 0x7E, 0x7F, 0x09, 0x01, 0xF7]),
+            Self::Gs | Self::Roland => Some(&[
+                0xF0, 0x41, 0x10, 0x42, 0x12, 0x40, 0x00, 0x7F, 0x00, 0x41, 0xF7,
+            ]),
+            Self::Xg => Some(&[0xF0, 0x43, 0x10, 0x4C, 0x00, 0x00, 0x7E, 0x00, 0xF7]),
+            Self::SoundFont => None,
+        }
+    }
+}
+
 /// Vertical placement of the karaoke lyric block.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "snake_case")]
@@ -12,6 +61,19 @@ pub enum TextVisibility {
     Center,
     Upper,
     Lower,
+}
+
+/// What fills the area behind the lyrics.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum BackgroundStyle {
+    /// The artwork shipped with the player.
+    #[default]
+    Default,
+    /// The flat `background_color` fill.
+    Color,
+    /// An external .png/.jpg scaled to the window.
+    Image,
 }
 
 /// How the moving karaoke cursor is drawn.
@@ -66,6 +128,11 @@ pub struct Settings {
     pub lyric_depth: f32,
     /// `#RRGGBB` colour behind the karaoke lyrics.
     pub background_color: String,
+    /// Colour fill or an external image behind the lyrics.
+    pub background_style: BackgroundStyle,
+    /// External image drawn behind the lyrics when `background_style` is
+    /// `Image`; it is scaled to the window.
+    pub background_image: Option<PathBuf>,
     /// Seconds the action readouts (VOL/KEY/BPM/UI/FONT) stay visible.
     /// 0 hides them immediately.
     pub indicator_seconds: u32,
@@ -92,6 +159,10 @@ pub struct Settings {
     pub confirm_exit: bool,
     /// Open the main window in fullscreen mode.
     pub fullscreen: bool,
+    /// Folder roots scanned for each supported format.
+    pub ncn_folder: Option<PathBuf>,
+    pub kmid_folder: Option<PathBuf>,
+    pub kar_folder: Option<PathBuf>,
     /// `#RRGGBB` colours for the unsung lyrics and the karaoke cursor.
     pub lyric_text_color: String,
     pub lyric_edge_color: String,
@@ -114,6 +185,38 @@ pub struct Settings {
     pub cho_inst: f32,
     pub rev_drum: f32,
     pub cho_drum: f32,
+    /// Seconds the song search popup stays visible after the last key press.
+    pub popup_seconds: u32,
+    /// Send the selected MIDI reset SysEx when a song starts.
+    pub midi_sysex: bool,
+    /// How a key change affects the notes that are already sounding.
+    pub transpose_mode: TransposeMode,
+    /// MIDI reset command used before a song and by the Reset MIDI button.
+    pub midi_reset: MidiReset,
+    /// External MIDI output port name; empty means the built-in SoundFont.
+    pub midi_out_port: String,
+    /// Per-channel MIDI output override (16 entries). An empty string follows
+    /// the default port above.
+    pub split_ports: Vec<String>,
+    /// Force every bass program to `lock_bass_program`.
+    pub lock_bass: bool,
+    /// General MIDI program (1-based, 34 = Electric Bass finger).
+    pub lock_bass_program: u32,
+    /// Force the drum channel to one GM2 kit.
+    pub lock_drum_kit: bool,
+    /// GM2 drum kit number (1-based).
+    pub lock_drum_program: u32,
+    /// Force kick notes to `lock_kick_note`.
+    pub lock_kick: bool,
+    pub lock_kick_note: u32,
+    /// Force snare notes to `lock_snare_note`.
+    pub lock_snare: bool,
+    pub lock_snare_note: u32,
+    /// Click track: first beat and the other beats use these GM notes.
+    pub metronome: bool,
+    pub metronome_hihat: bool,
+    pub metronome_first: u32,
+    pub metronome_other: u32,
 }
 
 impl Default for Settings {
@@ -135,18 +238,23 @@ impl Default for Settings {
             lyric_font: None,
             lyric_depth: 0.0,
             background_color: "#000000".to_owned(),
+            background_style: BackgroundStyle::Default,
+            background_image: None,
             indicator_seconds: 5,
             playlist_seconds: 10,
             show_song_info: true,
             show_bar_beat: true,
             show_clock: true,
-            delete_played_songs: false,
-            play_immediately: false,
+            delete_played_songs: true,
+            play_immediately: true,
             auto_play: true,
             music_interval_seconds: 0,
             hide_cursor: false,
             confirm_exit: true,
             fullscreen: false,
+            ncn_folder: None,
+            kmid_folder: None,
+            kar_folder: None,
             lyric_text_color: "#FFFFFF".to_owned(),
             lyric_edge_color: "#000000".to_owned(),
             cursor_text_color: "#0000FF".to_owned(),
@@ -162,6 +270,24 @@ impl Default for Settings {
             cho_inst: 0.5,
             rev_drum: 0.5,
             cho_drum: 0.5,
+            popup_seconds: 5,
+            midi_sysex: false,
+            transpose_mode: TransposeMode::default(),
+            midi_reset: MidiReset::default(),
+            midi_out_port: String::new(),
+            split_ports: vec![String::new(); 16],
+            lock_bass: false,
+            lock_bass_program: 34,
+            lock_drum_kit: false,
+            lock_drum_program: 1,
+            lock_kick: false,
+            lock_kick_note: 36,
+            lock_snare: false,
+            lock_snare_note: 38,
+            metronome: false,
+            metronome_hihat: false,
+            metronome_first: 75,
+            metronome_other: 76,
         }
     }
 }
@@ -212,6 +338,8 @@ impl Settings {
     }
 
     pub fn sanitise(&mut self) {
+        self.split_ports.resize(16, String::new());
+        self.split_ports.truncate(16);
         if !self.volume.is_finite() {
             self.volume = 0.7;
         }
@@ -290,6 +418,27 @@ impl Settings {
             .soundfont
             .take()
             .map(|path| std::path::absolute(&path).unwrap_or(path));
+
+        for path in [
+            &mut self.ncn_folder,
+            &mut self.kmid_folder,
+            &mut self.kar_folder,
+        ] {
+            sanitise_optional_path(path);
+        }
+    }
+}
+
+fn sanitise_optional_path(path: &mut Option<PathBuf>) {
+    if path
+        .as_ref()
+        .is_some_and(|value| value.as_os_str().is_empty())
+    {
+        *path = None;
+        return;
+    }
+    if let Some(value) = path.take() {
+        *path = Some(std::path::absolute(&value).unwrap_or(value));
     }
 }
 
@@ -318,6 +467,7 @@ mod tests {
         settings.transpose = -3;
         settings.melo_muted = true;
         settings.fullscreen = true;
+        settings.ncn_folder = Some(PathBuf::from(r"C:\Songs\NCN"));
 
         let text = serde_json::to_string(&settings).unwrap();
         let back: Settings = serde_json::from_str(&text).unwrap();
@@ -325,6 +475,30 @@ mod tests {
         assert_eq!(back.transpose, -3);
         assert!(back.melo_muted);
         assert!(back.fullscreen);
+        assert_eq!(back.ncn_folder, Some(PathBuf::from(r"C:\Songs\NCN")));
+    }
+
+    #[test]
+    fn midi_reset_commands_match_the_standard_sysex() {
+        assert_eq!(
+            MidiReset::Gm.sysex(),
+            Some([0xF0, 0x7E, 0x7F, 0x09, 0x01, 0xF7].as_slice())
+        );
+        assert_eq!(
+            MidiReset::Gs.sysex(),
+            Some(
+                [
+                    0xF0, 0x41, 0x10, 0x42, 0x12, 0x40, 0x00, 0x7F, 0x00, 0x41, 0xF7
+                ]
+                .as_slice()
+            )
+        );
+        assert_eq!(
+            MidiReset::Xg.sysex(),
+            Some([0xF0, 0x43, 0x10, 0x4C, 0x00, 0x00, 0x7E, 0x00, 0xF7].as_slice())
+        );
+        assert_eq!(MidiReset::Roland.sysex(), MidiReset::Gs.sysex());
+        assert_eq!(MidiReset::SoundFont.sysex(), None);
     }
 
     #[test]
@@ -422,6 +596,9 @@ mod tests {
         assert!(settings.show_clock);
         assert!(!settings.hide_cursor);
         assert!(settings.confirm_exit);
+        assert!(settings.ncn_folder.is_none());
+        assert!(settings.kmid_folder.is_none());
+        assert!(settings.kar_folder.is_none());
 
         settings.indicator_seconds = 999;
         settings.playlist_seconds = 61;
@@ -433,8 +610,8 @@ mod tests {
     #[test]
     fn player_defaults_and_limits() {
         let mut settings = Settings::default();
-        assert!(!settings.delete_played_songs);
-        assert!(!settings.play_immediately);
+        assert!(settings.delete_played_songs);
+        assert!(settings.play_immediately);
         assert!(settings.auto_play);
         assert_eq!(settings.music_interval_seconds, 0);
 

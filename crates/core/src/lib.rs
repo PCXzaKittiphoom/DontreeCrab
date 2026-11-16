@@ -19,6 +19,7 @@ pub mod audio;
 pub mod i18n;
 pub mod kar;
 pub mod kmid;
+pub mod library;
 pub mod loader;
 pub mod lyrics;
 pub mod meter;

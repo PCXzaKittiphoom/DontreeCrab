@@ -32,9 +32,9 @@ pub struct AudioHandle {
 /// `buffer_ms` requests a fixed buffer size in milliseconds; `0` uses the
 /// driver default. If the device rejects the requested size, the stream is
 /// rebuilt with the default size instead of failing.
-pub fn start<F>(make_player: F, position: Arc<AtomicU64>, buffer_ms: u32) -> Result<AudioHandle>
+pub fn start<F>(mut make_player: F, position: Arc<AtomicU64>, buffer_ms: u32) -> Result<AudioHandle>
 where
-    F: Fn(u32) -> Result<Player>,
+    F: FnMut(u32) -> Result<Player>,
 {
     let host = cpal::default_host();
     let device = host
@@ -44,7 +44,7 @@ where
     let config = choose_config(&device)?;
     let sample_rate = config.sample_rate();
 
-    let build = |buffer_frames: Option<u32>| -> Result<AudioHandle> {
+    let mut build = |buffer_frames: Option<u32>| -> Result<AudioHandle> {
         let player = make_player(sample_rate)?;
         let (commands, receiver) = mpsc::channel();
         let stream = build_stream(

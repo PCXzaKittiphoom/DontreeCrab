@@ -3,14 +3,72 @@ use std::sync::Arc;
 use anyhow::Result;
 use rustysynth::{SoundFont, Synthesizer, SynthesizerSettings};
 
+use super::midi_out::MidiRouting;
 use crate::meter::MeterMap;
 use crate::model::{EventKind, Song};
+use crate::settings::{MidiReset, TransposeMode};
 
 /// Highest voice limit rustysynth accepts.
 pub const MAXIMUM_POLYPHONY: usize = 256;
 
+/// Voice and drum fixes applied while a song plays.
+///
+/// All note/program numbers are General MIDI names, 0-based.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct MidiOptions {
+    /// Force every bass program (GM 33-40) to `bass_program`.
+    pub lock_bass: bool,
+    pub bass_program: u8,
+    /// Force the drum channel to one kit.
+    pub lock_drum_kit: bool,
+    pub drum_program: u8,
+    /// Force kick notes (35/36) to `kick_note`.
+    pub lock_kick: bool,
+    pub kick_note: u8,
+    /// Force snare notes (31 sticks, 38-40) to `snare_note`.
+    ///
+    /// 37 (side stick) is deliberately left alone: it is a different
+    /// instrument and songs use it as a rim click.
+    pub lock_snare: bool,
+    pub snare_note: u8,
+    /// Click track on the drum channel.
+    pub metronome: bool,
+    /// Use a closed hi-hat (42) for every beat instead of the two notes below.
+    pub metronome_hihat: bool,
+    pub metronome_first: u8,
+    pub metronome_other: u8,
+    /// Send a General MIDI reset when the options are applied (`MIDI SysEx`).
+    pub sysex: bool,
+    /// How a key change treats the notes that are already sounding.
+    pub transpose_mode: TransposeMode,
+    /// Reset command sent when starting a song (`MIDI SysEx`).
+    pub reset: MidiReset,
+}
+
+impl Default for MidiOptions {
+    fn default() -> Self {
+        Self {
+            lock_bass: false,
+            bass_program: 33,
+            lock_drum_kit: false,
+            drum_program: 0,
+            lock_kick: false,
+            kick_note: 36,
+            lock_snare: false,
+            snare_note: 38,
+            metronome: false,
+            metronome_hihat: false,
+            metronome_first: 75,
+            metronome_other: 76,
+            sysex: false,
+            transpose_mode: TransposeMode::default(),
+            reset: MidiReset::default(),
+        }
+    }
+}
+
 /// Commands the UI thread can send to the audio thread.
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub enum Command {
     Play,
     Pause,
@@ -35,6 +93,12 @@ pub enum Command {
         mid_db: f32,
         high_db: f32,
     },
+    /// Voice/drum fixes and the metronome.
+    SetMidiOptions(MidiOptions),
+    /// Route the song to external MIDI devices (per channel).
+    SetMidiRouting(MidiRouting),
+    /// Send a MIDI reset now (the Reset MIDI button).
+    MidiReset(MidiReset),
     /// Reverb/chorus send multipliers (1.0 = keep the MIDI file's values).
     SetEffectSends {
         midi_effects: bool,
@@ -93,6 +157,15 @@ impl PlayKind {
     }
 }
 
+/// One note that is currently sounding (used to retune held notes).
+#[derive(Debug, Clone, Copy)]
+struct ActiveNote {
+    channel: i32,
+    /// Key as written in the file, before transposition and locks.
+    source_key: i32,
+    velocity: i32,
+}
+
 #[derive(Debug, Clone)]
 struct PlayEvent {
     at_us: u64,
@@ -128,6 +201,20 @@ pub struct Player {
     /// rescale the sends without losing the values written in the file.
     cc_reverb: [i32; 16],
     cc_chorus: [i32; 16],
+    midi: MidiOptions,
+    /// Program the file asked for, per channel (-1 = not seen yet).
+    source_program: [i32; 16],
+    /// Program last sent to the synth, per channel.
+    sent_program: [i32; 16],
+    /// External MIDI outputs and the per-channel routing.
+    routing: MidiRouting,
+    /// Notes that are sounding right now, so a key change can retune them.
+    active_notes: Vec<ActiveNote>,
+    /// `(tick, first beat of the bar)` for the click track.
+    beats: Vec<(u64, bool)>,
+    tempo_map: crate::tempo::TempoMap,
+    /// Song events without the click track, so it can be rebuilt.
+    base_events: Vec<PlayEvent>,
 }
 
 impl Player {
@@ -174,11 +261,20 @@ impl Player {
 
         let end_tick = song.tempo_map.us_to_tick(song.duration_us);
         let meter = MeterMap::new(song.ticks_per_quarter, song.time_signatures.clone());
+        let mut beats = Vec::new();
+        let mut tick = 0u64;
+        while tick <= end_tick {
+            let beat = meter.beat_ticks_at(tick).max(1);
+            let bar_start = meter.bar_start_tick(tick);
+            beats.push((tick, tick == bar_start));
+            tick += beat;
+        }
         let end_us = song
             .tempo_map
             .tick_to_us(meter.bar_end_tick(end_tick))
             .saturating_add(2_000_000);
 
+        let base_events = events.clone();
         Ok(Self {
             synth,
             sample_rate,
@@ -202,6 +298,14 @@ impl Player {
             // rustysynth resets the GM sends to these values.
             cc_reverb: [40; 16],
             cc_chorus: [0; 16],
+            midi: MidiOptions::default(),
+            source_program: [-1; 16],
+            sent_program: [-1; 16],
+            routing: MidiRouting::internal(),
+            active_notes: Vec::new(),
+            beats,
+            tempo_map: song.tempo_map.clone(),
+            base_events,
         })
     }
 
@@ -235,12 +339,18 @@ impl Player {
 
     pub fn pause(&mut self) {
         self.playing = false;
+        self.active_notes.clear();
         self.synth.note_off_all(true);
+        self.routing.panic_all();
     }
 
     pub fn stop(&mut self) {
         self.playing = false;
+        self.active_notes.clear();
         self.synth.reset();
+        self.routing.panic_all();
+        self.source_program = [-1; 16];
+        self.sent_program = [-1; 16];
         self.cc_reverb = [40; 16];
         self.cc_chorus = [0; 16];
         self.resend_effects();
@@ -253,9 +363,298 @@ impl Player {
         self.synth.set_master_volume(volume.clamp(0.0, 2.0));
     }
 
+    /// Voice/drum fixes for the current song, plus the click track.
+    ///
+    /// Everything applies immediately: programs whose mapping changed are sent
+    /// again so a lock is audible without restarting the song, and the click
+    /// track is rebuilt around the current playhead.
+    pub fn set_midi_options(&mut self, options: MidiOptions) {
+        let sysex_was = self.midi.sysex;
+        // Re-mapping a drum key while it sounds would leave the note ringing,
+        // because its note-off would be translated with the new mapping.
+        let drum_keys_changed = self.midi.lock_kick != options.lock_kick
+            || self.midi.kick_note != options.kick_note
+            || self.midi.lock_snare != options.lock_snare
+            || self.midi.snare_note != options.snare_note;
+        if drum_keys_changed {
+            self.release_remapped_drums(&options);
+        }
+        let metronome_changed = self.midi.metronome != options.metronome
+            || self.midi.metronome_hihat != options.metronome_hihat
+            || self.midi.metronome_first != options.metronome_first
+            || self.midi.metronome_other != options.metronome_other;
+        self.midi = options;
+
+        for channel in 0..16 {
+            let source = self.source_program[channel];
+            if source < 0 {
+                continue;
+            }
+            let mapped = map_program(&self.midi, channel as i32, source);
+            if self.sent_program[channel] != mapped || (channel == 9 && self.midi.lock_drum_kit) {
+                if channel == 9 && self.midi.lock_drum_kit {
+                    self.pin_drum_bank();
+                }
+                if self.channel_on_synth(channel as i32) {
+                    self.synth
+                        .process_midi_message(channel as i32, 0xC0, mapped, 0);
+                }
+                self.send_to_midi_out(
+                    channel as i32,
+                    &[0xC0 | channel_byte(channel as i32), midi_data(mapped)],
+                );
+                self.sent_program[channel] = mapped;
+            }
+        }
+
+        self.apply_drum_kit();
+
+        if self.midi.sysex && !sysex_was {
+            if let Some(sysex) = self.midi.reset.sysex() {
+                self.routing.send_all(sysex);
+            }
+        }
+
+        if metronome_changed {
+            self.rebuild_metronome();
+            // Skip the clicks that are already behind the playhead.
+            let position = self.position.max(0.0) as u64;
+            self.next_event = self.events.partition_point(|event| event.at_us <= position);
+        }
+    }
+
+    /// Replace the external outputs and the per-channel routing.
+    ///
+    /// The programs and controllers that are in effect at the playhead are
+    /// replayed, so the devices start in sync even in the middle of a song.
+    pub fn set_midi_routing(&mut self, routing: MidiRouting) {
+        self.routing.panic_all();
+        self.routing = routing;
+        if self.midi.sysex {
+            if let Some(sysex) = self.midi.reset.sysex() {
+                self.routing.send_all(sysex);
+            }
+        }
+        let position = self.position_us();
+        self.seek(position);
+    }
+
+    /// Apply a MIDI reset right now.
+    ///
+    /// The local synthesizer is always reset, and every external device gets the
+    /// controller reset plus the selected SysEx (when it has one). The song's
+    /// programs and controllers are then rebuilt at the playhead so the music
+    /// continues correctly.
+    pub fn reset_midi(&mut self, reset: MidiReset) {
+        self.active_notes.clear();
+        self.routing.reset_all();
+        if let Some(sysex) = reset.sysex() {
+            self.routing.send_all(sysex);
+        }
+        let position = self.position_us();
+        self.seek(position);
+    }
+
+    /// Output index for `channel` (`None` = the built-in synthesizer).
+    fn route_for(&self, channel: i32) -> Option<usize> {
+        if (0..16).contains(&channel) {
+            self.routing.route(channel as usize)
+        } else {
+            None
+        }
+    }
+
+    /// True when `channel` is played by the built-in synthesizer.
+    fn channel_on_synth(&self, channel: i32) -> bool {
+        self.route_for(channel).is_none()
+    }
+
+    /// Forward one message to the output selected for `channel`.
+    fn send_to_midi_out(&mut self, channel: i32, message: &[u8]) {
+        let route = self.route_for(channel);
+        self.routing.send(route, message);
+    }
+
+    /// Put the drum channel back in the percussion bank (128).
+    ///
+    /// rustysynth turns a bank select on channel 10 into `128 + CC0` and falls
+    /// back to the standard kit when that bank has no such patch. Files that
+    /// send CC0 = 120 (very common) would therefore ignore the locked kit.
+    fn pin_drum_bank(&mut self) {
+        if self.channel_on_synth(9) {
+            self.synth.process_midi_message(9, 0xB0, 0, 0);
+        }
+        self.send_to_midi_out(9, &[0xB0 | 9, 0, 0]);
+    }
+
+    /// Send the locked drum kit when the file never selects one.
+    fn apply_drum_kit(&mut self) {
+        if !self.midi.lock_drum_kit || self.source_program[9] >= 0 {
+            return;
+        }
+        let patch = i32::from(self.midi.drum_program);
+        self.pin_drum_bank();
+        if self.channel_on_synth(9) {
+            self.synth.process_midi_message(9, 0xC0, patch, 0);
+        }
+        self.send_to_midi_out(9, &[0xC0 | 9, midi_data(patch)]);
+        self.sent_program[9] = patch;
+    }
+
+    fn rebuild_metronome(&mut self) {
+        self.events = self.base_events.clone();
+        self.next_event = 0;
+        if !self.midi.metronome {
+            return;
+        }
+        let mut clicks = Vec::with_capacity(self.beats.len() * 2);
+        for &(tick, first) in &self.beats {
+            let at = self.tempo_map.tick_to_us(tick);
+            let note = beat_note(&self.midi, first);
+            // The closed hi-hat is much quieter than the claves it replaces in
+            // most SoundFonts, so it is played at full velocity.
+            let velocity = if self.midi.metronome_hihat { 127 } else { 100 };
+            clicks.push(PlayEvent {
+                at_us: at,
+                kind: PlayKind::NoteOn {
+                    channel: 9,
+                    key: note,
+                    velocity,
+                },
+            });
+            clicks.push(PlayEvent {
+                at_us: at + 40_000,
+                kind: PlayKind::NoteOff {
+                    channel: 9,
+                    key: note,
+                },
+            });
+        }
+        self.events.extend(clicks);
+        self.events.sort_by_key(|event| event.at_us);
+    }
+
+    /// Change the key.
+    ///
+    /// What happens to the notes that are already sounding depends on
+    /// [`MidiOptions::transpose_mode`]:
+    ///
+    /// * `All` retunes every channel in one pass (Roland "All Tuner").
+    /// * `Wolf` does the same channel by channel.
+    /// * `Recovery` cuts them and only transposes what follows.
     pub fn set_transpose(&mut self, semitones: i32) {
-        self.synth.note_off_all(true);
-        self.transpose = semitones.clamp(-24, 24);
+        let previous = self.transpose;
+        let next = semitones.clamp(-24, 24);
+        if next == previous {
+            return;
+        }
+        self.transpose = next;
+        match self.midi.transpose_mode {
+            TransposeMode::Recovery => {
+                self.active_notes.clear();
+                self.synth.note_off_all(true);
+                self.routing.panic_all();
+            }
+            TransposeMode::All => self.retrigger_notes(previous, false),
+            TransposeMode::Wolf => self.retrigger_notes(previous, true),
+        }
+    }
+
+    /// Stop the sounding drum notes whose key would be remapped.
+    ///
+    /// Without this a note that is already playing would get its note-off
+    /// translated with the new mapping and ring until the song ends.
+    fn release_remapped_drums(&mut self, options: &MidiOptions) {
+        let notes: Vec<ActiveNote> = self
+            .active_notes
+            .iter()
+            .copied()
+            .filter(|note| note.channel == 9)
+            .collect();
+        let mut released: Vec<i32> = Vec::new();
+        for note in notes {
+            let old_key = map_key(&self.midi, 9, note.source_key);
+            if old_key == map_key(options, 9, note.source_key) {
+                continue;
+            }
+            if self.channel_on_synth(9) {
+                self.synth.note_off(9, old_key);
+            }
+            self.send_to_midi_out(9, &[0x80 | 9, midi_data(old_key), 0]);
+            released.push(note.source_key);
+        }
+        self.active_notes
+            .retain(|note| !(note.channel == 9 && released.contains(&note.source_key)));
+    }
+
+    /// Re-send the sounding notes so they follow the new key.
+    fn retrigger_notes(&mut self, previous: i32, per_channel: bool) {
+        // The drum channel is never transposed, so retriggering it would only
+        // add an extra (wrong) hit.
+        let notes: Vec<ActiveNote> = self
+            .active_notes
+            .iter()
+            .copied()
+            .filter(|note| note.channel != 9)
+            .collect();
+        if per_channel {
+            for channel in 0..16 {
+                for note in notes.iter().filter(|note| note.channel == channel) {
+                    self.send_active_note(note, previous, false);
+                }
+                for note in notes.iter().filter(|note| note.channel == channel) {
+                    self.send_active_note(note, self.transpose, true);
+                }
+            }
+        } else {
+            for note in &notes {
+                self.send_active_note(note, previous, false);
+            }
+            for note in &notes {
+                self.send_active_note(note, self.transpose, true);
+            }
+        }
+    }
+
+    /// Send one note on/off for a sounding note at `transpose`.
+    fn send_active_note(&mut self, note: &ActiveNote, transpose: i32, on: bool) {
+        let key = map_key(
+            &self.midi,
+            note.channel,
+            transpose_key(note.channel, note.source_key, transpose),
+        );
+        if on {
+            if self.channel_on_synth(note.channel) {
+                self.synth.note_on(note.channel, key, note.velocity);
+            }
+            self.send_to_midi_out(
+                note.channel,
+                &[
+                    0x90 | channel_byte(note.channel),
+                    midi_data(key),
+                    midi_data(note.velocity),
+                ],
+            );
+        } else {
+            if self.channel_on_synth(note.channel) {
+                self.synth.note_off(note.channel, key);
+            }
+            self.send_to_midi_out(
+                note.channel,
+                &[0x80 | channel_byte(note.channel), midi_data(key), 0],
+            );
+        }
+    }
+
+    /// Forget one sounding note (the note-off was played or the note ended).
+    fn forget_note(&mut self, channel: i32, source_key: i32) {
+        if let Some(index) = self
+            .active_notes
+            .iter()
+            .position(|note| note.channel == channel && note.source_key == source_key)
+        {
+            self.active_notes.remove(index);
+        }
     }
 
     /// Change the playback speed. 1.0 keeps the song's own tempo; 1.5 plays it
@@ -273,7 +672,11 @@ impl Player {
         let bit = 1u16 << (channel & 15);
         if muted {
             self.muted_channels |= bit;
+            self.active_notes
+                .retain(|note| note.channel != i32::from(channel));
             self.synth.note_off_all_channel(channel as i32, true);
+            let route = self.route_for(channel as i32);
+            self.routing.channel_off(route, channel);
         } else {
             self.muted_channels &= !bit;
         }
@@ -321,6 +724,9 @@ impl Player {
 
     fn resend_effects(&mut self) {
         for channel in 0..16usize {
+            if !self.channel_on_synth(channel as i32) {
+                continue;
+            }
             let (rev_mult, cho_mult) = if channel == 9 {
                 (self.rev_drum, self.cho_drum)
             } else {
@@ -346,6 +752,9 @@ impl Player {
             }
             Command::SetVolume(volume) => self.set_volume(volume),
             Command::SetTranspose(semitones) => self.set_transpose(semitones),
+            Command::SetMidiOptions(options) => self.set_midi_options(options),
+            Command::SetMidiRouting(routing) => self.set_midi_routing(routing),
+            Command::MidiReset(reset) => self.reset_midi(reset),
             Command::SetSpeed(speed) => self.set_speed(speed),
             Command::SetChannelMuted { channel, muted } => self.set_channel_muted(channel, muted),
             Command::SetEq {
@@ -369,7 +778,9 @@ impl Player {
     /// not restarted.
     pub fn seek(&mut self, us: u64) {
         let target = (us as f64).min(self.end_us);
+        self.active_notes.clear();
         self.synth.reset();
+        self.routing.panic_all();
         self.cc_reverb = [40; 16];
         self.cc_chorus = [0; 16];
         self.next_event = self
@@ -381,6 +792,9 @@ impl Player {
             }
         }
         self.resend_effects();
+        // Files that never select a drum program lose the locked kit when the
+        // synth is reset, so re-apply it after every seek.
+        self.apply_drum_kit();
         self.position = target;
         self.finished = false;
     }
@@ -449,7 +863,7 @@ impl Player {
                 }
             }
 
-            // Safety net: a hot mix must not hard-clip (that sounds "mushy").
+            // Safety net: a hot mix must not hard-clip ("mushy" sound).
             for i in done..done + len {
                 left[i] = soft_limit(left[i]);
                 right[i] = soft_limit(right[i]);
@@ -460,6 +874,10 @@ impl Player {
         }
 
         if self.position >= self.end_us {
+            self.active_notes.clear();
+            if !self.finished {
+                self.routing.panic_all();
+            }
             self.finished = true;
         }
     }
@@ -472,16 +890,45 @@ impl Player {
                 velocity,
             } => {
                 if !self.is_muted(channel) {
-                    self.synth.note_on(
+                    if velocity > 0 {
+                        self.active_notes.push(ActiveNote {
+                            channel,
+                            source_key: key,
+                            velocity,
+                        });
+                    } else {
+                        self.forget_note(channel, key);
+                    }
+                    let key = map_key(
+                        &self.midi,
                         channel,
                         transpose_key(channel, key, self.transpose),
-                        velocity,
+                    );
+                    if self.channel_on_synth(channel) {
+                        self.synth.note_on(channel, key, velocity);
+                    }
+                    self.send_to_midi_out(
+                        channel,
+                        &[
+                            0x90 | channel_byte(channel),
+                            midi_data(key),
+                            midi_data(velocity),
+                        ],
                     );
                 }
             }
-            PlayKind::NoteOff { channel, key } => self
-                .synth
-                .note_off(channel, transpose_key(channel, key, self.transpose)),
+            PlayKind::NoteOff { channel, key } => {
+                self.forget_note(channel, key);
+                let key = map_key(
+                    &self.midi,
+                    channel,
+                    transpose_key(channel, key, self.transpose),
+                );
+                if self.channel_on_synth(channel) {
+                    self.synth.note_off(channel, key);
+                }
+                self.send_to_midi_out(channel, &[0x80 | channel_byte(channel), midi_data(key), 0]);
+            }
             PlayKind::Control {
                 channel,
                 controller,
@@ -498,7 +945,13 @@ impl Player {
                         self.rev_inst
                     };
                     let send = self.effect_send(value, multiplier);
-                    self.synth.process_midi_message(channel, 0xB0, 91, send);
+                    if self.channel_on_synth(channel) {
+                        self.synth.process_midi_message(channel, 0xB0, 91, send);
+                    }
+                    self.send_to_midi_out(
+                        channel,
+                        &[0xB0 | channel_byte(channel), 91, midi_data(value)],
+                    );
                 }
                 93 => {
                     if (0..16).contains(&channel) {
@@ -510,29 +963,158 @@ impl Player {
                         self.cho_inst
                     };
                     let send = self.effect_send(value, multiplier);
-                    self.synth.process_midi_message(channel, 0xB0, 93, send);
+                    if self.channel_on_synth(channel) {
+                        self.synth.process_midi_message(channel, 0xB0, 93, send);
+                    }
+                    self.send_to_midi_out(
+                        channel,
+                        &[0xB0 | channel_byte(channel), 93, midi_data(value)],
+                    );
                 }
-                _ => self
-                    .synth
-                    .process_midi_message(channel, 0xB0, controller, value),
+                _ => {
+                    let value = if channel == 9
+                        && self.midi.lock_drum_kit
+                        && matches!(controller, 0 | 32)
+                    {
+                        0
+                    } else {
+                        value
+                    };
+                    if self.channel_on_synth(channel) {
+                        self.synth
+                            .process_midi_message(channel, 0xB0, controller, value);
+                    }
+                    self.send_to_midi_out(
+                        channel,
+                        &[
+                            0xB0 | channel_byte(channel),
+                            midi_data(controller),
+                            midi_data(value),
+                        ],
+                    );
+                }
             },
             PlayKind::Program { channel, program } => {
-                self.synth.process_midi_message(channel, 0xC0, program, 0)
+                if (0..16).contains(&channel) {
+                    self.source_program[channel as usize] = program;
+                }
+                let mapped = map_program(&self.midi, channel, program);
+                if (0..16).contains(&channel) {
+                    self.sent_program[channel as usize] = mapped;
+                }
+                if channel == 9 && self.midi.lock_drum_kit {
+                    self.pin_drum_bank();
+                }
+                if self.channel_on_synth(channel) {
+                    self.synth.process_midi_message(channel, 0xC0, mapped, 0);
+                }
+                self.send_to_midi_out(channel, &[0xC0 | channel_byte(channel), midi_data(mapped)]);
             }
             PlayKind::Bend { channel, value } => {
-                self.synth
-                    .process_midi_message(channel, 0xE0, value & 0x7F, (value >> 7) & 0x7F)
+                if self.channel_on_synth(channel) {
+                    self.synth.process_midi_message(
+                        channel,
+                        0xE0,
+                        value & 0x7F,
+                        (value >> 7) & 0x7F,
+                    );
+                }
+                self.send_to_midi_out(
+                    channel,
+                    &[
+                        0xE0 | channel_byte(channel),
+                        (value & 0x7F) as u8,
+                        ((value >> 7) & 0x7F) as u8,
+                    ],
+                );
             }
             PlayKind::ChannelPressure { channel, value } => {
-                self.synth.process_midi_message(channel, 0xD0, value, 0)
+                if self.channel_on_synth(channel) {
+                    self.synth.process_midi_message(channel, 0xD0, value, 0);
+                }
+                self.send_to_midi_out(channel, &[0xD0 | channel_byte(channel), midi_data(value)]);
             }
             PlayKind::KeyPressure {
                 channel,
                 key,
                 value,
-            } => self.synth.process_midi_message(channel, 0xA0, key, value),
+            } => {
+                if self.channel_on_synth(channel) {
+                    self.synth.process_midi_message(channel, 0xA0, key, value);
+                }
+                self.send_to_midi_out(
+                    channel,
+                    &[
+                        0xA0 | channel_byte(channel),
+                        midi_data(key),
+                        midi_data(value),
+                    ],
+                );
+            }
         }
     }
+}
+
+impl Drop for Player {
+    fn drop(&mut self) {
+        // The audio stream (and this player) is dropped when the user stops or
+        // opens another song; without this the external device keeps the last
+        // notes sounding.
+        self.routing.panic_all();
+    }
+}
+
+/// Drum note used for one metronome click.
+///
+/// With `metronome_hihat` the closed hi-hat replaces both configured notes, so
+/// every beat of the bar gets the same hat sound.
+fn beat_note(options: &MidiOptions, first: bool) -> i32 {
+    if options.metronome_hihat {
+        42
+    } else if first {
+        i32::from(options.metronome_first)
+    } else {
+        i32::from(options.metronome_other)
+    }
+}
+
+/// Low nibble of a MIDI status byte for `channel`.
+fn channel_byte(channel: i32) -> u8 {
+    (channel as u8) & 0x0F
+}
+
+/// Clamp a value into the 7-bit data range MIDI messages allow.
+fn midi_data(value: i32) -> u8 {
+    value.clamp(0, 127) as u8
+}
+
+/// The program actually sent for `channel`, after the MIDI fixes.
+fn map_program(options: &MidiOptions, channel: i32, program: i32) -> i32 {
+    if channel == 9 {
+        return if options.lock_drum_kit {
+            i32::from(options.drum_program)
+        } else {
+            program
+        };
+    }
+    if options.lock_bass && (32..=39).contains(&program) {
+        return i32::from(options.bass_program);
+    }
+    program
+}
+
+/// Kick/snare replacement for drum notes.
+fn map_key(options: &MidiOptions, channel: i32, key: i32) -> i32 {
+    if channel != 9 {
+        return key;
+    }
+    if options.lock_kick && matches!(key, 35 | 36) {
+        return i32::from(options.kick_note);
+    }
+    if options.lock_snare && matches!(key, 31 | 38..=40) {
+        return i32::from(options.snare_note);
+    }
+    key
 }
 
 /// General MIDI channel 10 (index 9) is a percussion channel: shifting its
@@ -766,6 +1348,69 @@ fn soft_limit(sample: f32) -> f32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn midi_locks_replace_programs_and_drum_notes() {
+        let mut options = MidiOptions::default();
+        assert_eq!(map_program(&options, 1, 32), 32);
+        options.lock_bass = true;
+        options.bass_program = 33;
+        assert_eq!(map_program(&options, 1, 32), 33);
+        assert_eq!(map_program(&options, 1, 39), 33);
+        assert_eq!(map_program(&options, 1, 0), 0);
+
+        options.lock_drum_kit = true;
+        // `MidiOptions` carries the zero-based program number, so the MIDI
+        // page's "25 Electronic" arrives here as 24.
+        options.drum_program = 3;
+        assert_eq!(map_program(&options, 9, 0), 3);
+        options.drum_program = 24;
+        assert_eq!(map_program(&options, 9, 0), 24);
+
+        options.lock_kick = true;
+        options.kick_note = 36;
+        assert_eq!(map_key(&options, 9, 35), 36);
+        assert_eq!(map_key(&options, 9, 36), 36);
+        assert_eq!(map_key(&options, 9, 38), 38);
+
+        options.lock_snare = true;
+        options.snare_note = 40;
+        assert_eq!(map_key(&options, 9, 38), 40);
+        assert_eq!(map_key(&options, 9, 39), 40);
+        assert_eq!(map_key(&options, 9, 31), 40); // Drum Sticks follow the snare
+        assert_eq!(map_key(&options, 9, 37), 37); // Side Stick is left alone
+        assert_eq!(map_key(&options, 9, 34), 34);
+        // Melodic channels are untouched.
+        assert_eq!(map_key(&options, 1, 35), 35);
+    }
+
+    #[test]
+    fn hihat_replaces_both_metronome_notes() {
+        let mut options = MidiOptions {
+            metronome: true,
+            metronome_first: 75,
+            metronome_other: 76,
+            ..Default::default()
+        };
+        assert_eq!(beat_note(&options, true), 75);
+        assert_eq!(beat_note(&options, false), 76);
+        options.metronome_hihat = true;
+        assert_eq!(beat_note(&options, true), 42);
+        assert_eq!(beat_note(&options, false), 42);
+    }
+
+    #[test]
+    fn midi_messages_stay_inside_seven_bits() {
+        assert_eq!(channel_byte(0), 0);
+        assert_eq!(channel_byte(9), 9);
+        assert_eq!(channel_byte(15), 15);
+        assert_eq!(midi_data(-1), 0);
+        assert_eq!(midi_data(0), 0);
+        assert_eq!(midi_data(127), 127);
+        assert_eq!(midi_data(200), 127);
+        assert_eq!(0x90 | channel_byte(9), 0x99);
+        assert_eq!(0xB0 | channel_byte(0), 0xB0);
+    }
 
     #[test]
     fn percussion_is_never_transposed() {

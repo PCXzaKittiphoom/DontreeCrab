@@ -1032,7 +1032,7 @@ dependencies = [
 
 [[package]]
 name = "dontreecrab"
-version = "0.1.2"
+version = "0.1.3"
 dependencies = [
  "anyhow",
  "clap",
@@ -1049,6 +1049,8 @@ dependencies = [
  "rustysynth",
  "serde",
  "serde_json",
+ "unicode-normalization",
+ "unicode-segmentation",
  "windows-sys 0.61.2",
  "winreg",
  "winresource",
@@ -2070,7 +2072,7 @@ dependencies = [
 
 [[package]]
 name = "karaoke_player"
-version = "0.1.2"
+version = "0.1.3"
 dependencies = [
  "anyhow",
  "clap",
@@ -2086,6 +2088,8 @@ dependencies = [
  "rustysynth",
  "serde",
  "serde_json",
+ "unicode-normalization",
+ "unicode-segmentation",
  "winreg",
 ]
 
@@ -2296,6 +2300,27 @@ checksum = "b63fbc4a50860e98e7b2aa7804ded1db5cbc3aff9193adaff57a6931bf7c4b4c"
 dependencies = [
  "adler2",
  "simd-adler32",
+]
+
+[[package]]
+name = "mkc"
+version = "0.1.3"
+dependencies = [
+ "anyhow",
+ "clap",
+ "karaoke_player",
+ "serde_json",
+]
+
+[[package]]
+name = "mkc-gui"
+version = "0.1.3"
+dependencies = [
+ "eframe",
+ "image",
+ "karaoke_player",
+ "rfd",
+ "winresource",
 ]
 
 [[package]]
@@ -3876,6 +3901,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "tinyvec"
+version = "1.6.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "87cc5ceb3875bb20c2890005a4e226a4651264a5c75edb2421b52861a0a0cb50"
+dependencies = [
+ "tinyvec_macros",
+]
+
+[[package]]
+name = "tinyvec_macros"
+version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "cda74da7e1a664f795bb1f8a87ec406fb89a02522cf6e50620d016add6dbbf5c"
+
+[[package]]
 name = "tokio"
 version = "1.54.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4015,6 +4055,15 @@ name = "unicode-ident"
 version = "1.0.27"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a2c754d6c33795a1c324727428e5a7dedb5b06195f9890bdbcba760d3e246563"
+
+[[package]]
+name = "unicode-normalization"
+version = "0.1.22"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5c5713f0fc4b5db668a2ac63cdb7bb4469d8c9fed047b1d0292cc7b0ce2ba921"
+dependencies = [
+ "tinyvec",
+]
 
 [[package]]
 name = "unicode-properties"

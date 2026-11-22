@@ -16,7 +16,10 @@ pub fn associate(exe: &Path, mid: bool) -> Result<()> {
     let exe = exe.display().to_string();
     let command = format!("\"{exe}\" gui \"%1\"");
 
-    let mut entries = vec![(".kar", "DontreeCrab.kar", "DontreeCrab karaoke song")];
+    let mut entries = vec![
+        (".kar", "DontreeCrab.kar", "DontreeCrab karaoke song"),
+        (".mkc", "DontreeCrab.mkc", "DontreeCrab MKC song"),
+    ];
     if mid {
         entries.push((".mid", "DontreeCrab.mid", "DontreeCrab MIDI song"));
         entries.push((".midi", "DontreeCrab.mid", "DontreeCrab MIDI song"));
@@ -58,9 +61,10 @@ pub fn unassociate() -> Result<()> {
     // Only remove an extension if it currently points at us (new or legacy
     // program ids are both cleaned up).
     for (extension, prog_ids) in [
-        (".kar", ["DontreeCrab.kar", "KaraokePlayer.kar"]),
-        (".mid", ["DontreeCrab.mid", "KaraokePlayer.mid"]),
-        (".midi", ["DontreeCrab.mid", "KaraokePlayer.mid"]),
+        (".kar", &["DontreeCrab.kar", "KaraokePlayer.kar"][..]),
+        (".mkc", &["DontreeCrab.mkc"][..]),
+        (".mid", &["DontreeCrab.mid", "KaraokePlayer.mid"][..]),
+        (".midi", &["DontreeCrab.mid", "KaraokePlayer.mid"][..]),
     ] {
         if let Ok(key) = classes.open_subkey(extension) {
             let current: String = key.get_value("").unwrap_or_default();
@@ -73,6 +77,7 @@ pub fn unassociate() -> Result<()> {
     for class in [
         "DontreeCrab.kar",
         "DontreeCrab.mid",
+        "DontreeCrab.mkc",
         "KaraokePlayer.kar",
         "KaraokePlayer.mid",
     ] {

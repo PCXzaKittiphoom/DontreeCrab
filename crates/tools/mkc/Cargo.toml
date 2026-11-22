@@ -1,0 +1,18 @@
+[package]
+name = "mkc"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+description = "MKC (MIDI Karaoke Container) converter for NCN songs"
+
+[[bin]]
+name = "mkc"
+path = "src/main.rs"
+
+[dependencies]
+karaoke_player = { path = "../../core" }
+anyhow.workspace = true
+clap.workspace = true
+serde_json.workspace = true

@@ -1,0 +1,21 @@
+[package]
+name = "mkc-gui"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+description = "MKC (MIDI Karaoke Container) converter GUI"
+
+[[bin]]
+name = "mkc-converter"
+path = "src/main.rs"
+
+[dependencies]
+karaoke_player = { path = "../../core" }
+eframe.workspace = true
+rfd.workspace = true
+image = { workspace = true, features = ["ico"] }
+
+[target."cfg(windows)".build-dependencies]
+winresource = "0.1"

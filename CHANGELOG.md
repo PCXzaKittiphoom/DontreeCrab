@@ -1,5 +1,56 @@
 # Changelog
 
+## 0.1.3
+
+Adds the MKC format end to end, multilingual lyrics with bundled font packs,
+and a set of player, converter and settings refinements.
+
+### MKC (MIDI Karaoke Container)
+
+- Open ZIP-based `.mkc` packages (`manifest.json`, `song.mid`, timed
+  `lyrics.json`, plain `lyrics.txt`) with no encryption; the layout is
+  documented in `docs/MKC-v0.1.md`.
+- Playback, the song database, Add a song, playlists, open/add filters and the
+  `.mkc` file association treat MKC as a first-class format.
+- The MIDI Editor reads the embedded MIDI and saves back into the package;
+  Save As rewrites the metadata and rescales lyric timing when the tempo
+  changes.
+- Standalone `mkc` CLI (`pack`/`info`/`unpack`) and a fixed-size
+  `mkc-converter` GUI with the MKC icon, blue theme and source-encoding
+  picker.
+- Converter output always lands under an `MKC` prefix folder; NCN drops its
+  `Song` component (`NCN\Song\U\SONG0001.mid` -> `MKC\U\SONG0001.mkc`).
+
+### Languages
+
+- UTF-8 lyrics with bundled Japanese, Korean, Chinese (simplified) and Lao
+  font packs; Sarabun covers Thai, Latin and Vietnamese.
+- `manifest.language` records `th`, `en`, `ja`, `zh`, `ko`, `vi` or `lo`,
+  filled from the lyrics when the source has no language.
+- Text is normalised to NFC and highlighted by grapheme cluster.
+- Shift-JIS, GB18030, Big5, EUC-KR, Windows-1258 and Windows-1251 source
+  encodings, with Shift-JIS auto-detection that keeps Thai text intact.
+
+### Player and settings
+
+- Song Data gains an MKC MIDI folder row.
+- The background picker offers Image and Color only, falls back to the shipped
+  artwork when no image is selected, and keeps the delete button locked until
+  a picture is chosen.
+- The right-click menu gains a Background switcher for Image and Color.
+- Add a song files copies under the leading letter of the code
+  (`acb123.kar` -> `A\acb123.kar`), creating the folder when it is missing.
+- The song search popup shows the format badge (NCN, KMID, KAR/MIDI, MKC) and
+  its white band reaches the panel border.
+
+### Fixes
+
+- Save As warns inside its own window before overwriting a file that lives
+  outside the song folders, and keeps `.mkc` names single-suffixed.
+- The converter scans large libraries on a worker thread with a cheap format
+  filter and a virtualised log, so a multi-gigabyte folder no longer freezes
+  the window.
+
 ## 0.1.2
 
 First full release. Adds the song database, external MIDI output with

@@ -35,6 +35,9 @@ msgstr "เพลย์ลิสต์ว่าง\nคลิกขวาเพ�
 msgid "SETTINGS"
 msgstr "ตั้งค่า"
 
+msgid "Settings"
+msgstr "ตั้งค่า"
+
 msgid "General"
 msgstr "ทั่วไป"
 
@@ -259,6 +262,12 @@ msgstr "ย่อหน้าต่าง"
 
 msgid "Show cursor"
 msgstr "แสดงเคอร์เซอร์"
+
+msgid "Hide transport bar"
+msgstr "ซ่อนแถบด้านล่าง"
+
+msgid "Show transport bar"
+msgstr "แสดงแถบด้านล่าง"
 
 msgid "Hide cursor"
 msgstr "ซ่อนเคอร์เซอร์"
@@ -497,8 +506,8 @@ msgstr "ตัวโหลดซาวด์ฟอนต์หยุดทำง
 msgid "Important notice"
 msgstr "ข้อควรทราบ"
 
-msgid "DontreeCrab is only a MIDI player, intended for MIDI content that you create yourself or are otherwise entitled to use.\n\nWe do not support or accept any use of this codebase for reading, converting, playing, copying, or supporting commercial karaoke formats that are copy-protected or restricted by law, such as EMK & XMK (eXtreme Karaoke), SIB & SIBKL (SIB/SIBK Karaoke) and SMK & SMKL & SMD (Sonic Karaoke), or any program that decrypts or bypasses file protection to play, convert, copy or distribute song libraries without permission from the copyright owners.\n\nIssues and pull requests requesting such support will be rejected immediately. Anyone who uses or modifies this software for those purposes is solely responsible for their own actions; the developers and contributors accept no liability.\n\nThis software is provided \"as is\", without warranty, as stated in the MIT License. This notice is not legal advice; please check the laws in your country."
-msgstr "DontreeCrab เป็นเพียงโปรแกรมเล่น MIDI สำหรับใช้งานกับไฟล์ MIDI ที่คุณสร้างขึ้นเอง หรือมีสิทธิ์ใช้งานโดยชอบธรรมเท่านั้น\n\nเราไม่สนับสนุนและไม่ยอมรับการนำโค้ดของโปรแกรมนี้ไปใช้ผิดวัตถุประสงค์ในลักษณะใด ๆ โดยเฉพาะการอ่าน แปลง เล่น คัดลอก หรือรองรับฟอร์แมตคาราโอเกะเชิงพาณิชย์ที่มีระบบป้องกัน หรือมีข้อจำกัดทางกฎหมาย เช่น EMK & XMK (eXtreme Karaoke), SIB & SIBKL (SIB/SIBK Karaoke) และ SMK & SMKL & SMD (Sonic Karaoke) รวมถึงโปรแกรมใด ๆ ที่ใช้ถอดรหัสหรือหลบเลี่ยงระบบป้องกัน ของไฟล์ เพื่อเล่น แปลง คัดลอก หรือเผยแพร่คลังเพลงโดยไม่ได้รับอนุญาตจากเจ้าของลิขสิทธิ์\n\nIssue และ pull request ที่ขอให้รองรับการใช้งานดังกล่าวจะถูกปฏิเสธทันที ผู้ที่นำโค้ดไปใช้ หรือดัดแปลงเพื่อวัตถุประสงค์เหล่านี้ต้องรับผิดชอบการกระทำของตนเองแต่เพียงผู้เดียว ผู้พัฒนาและผู้มีส่วนร่วมจะไม่รับผิดชอบใด ๆ ทั้งสิ้น\n\nซอฟต์แวร์นี้ให้ไว้ “ตามสภาพ” (as is) โดยไม่มีการรับประกันใด ๆ ตามที่ระบุในสัญญาอนุญาต MIT ข้อความนี้ไม่ใช่คำแนะนำทางกฎหมาย โปรดตรวจสอบกฎหมายในประเทศของคุณ"
+msgid "DontreeCrab is only a MIDI player, intended for MIDI content that you create yourself or are otherwise entitled to use.\n\nWe do not support or accept any use of this codebase for reading, converting, playing, copying, or supporting commercial karaoke formats that are copy-protected or restricted by law, such as EMK & XMK (eXtreme Karaoke), SIB & SIBKL (SIBSIB Karaoke) and SMK & SMKL & SMD (Sonic Karaoke), or any program that decrypts or bypasses file protection to play, convert, copy or distribute song libraries without permission from the copyright owners.\n\nIssues and pull requests requesting such support will be rejected immediately. Anyone who uses or modifies this software for those purposes is solely responsible for their own actions; the developers and contributors accept no liability.\n\nThis software is provided \"as is\", without warranty, as stated in the MIT License. This notice is not legal advice; please check the laws in your country."
+msgstr "DontreeCrab เป็นเพียงโปรแกรมเล่น MIDI สำหรับใช้งานกับไฟล์ MIDI ที่คุณสร้างขึ้นเอง หรือมีสิทธิ์ใช้งานโดยชอบธรรมเท่านั้น\n\nเราไม่สนับสนุนและไม่ยอมรับการนำโค้ดของโปรแกรมนี้ไปใช้ผิดวัตถุประสงค์ในลักษณะใด ๆ โดยเฉพาะการอ่าน แปลง เล่น คัดลอก หรือรองรับฟอร์แมตคาราโอเกะเชิงพาณิชย์ที่มีระบบป้องกัน หรือมีข้อจำกัดทางกฎหมาย เช่น EMK & XMK (eXtreme Karaoke), SIB & SIBKL (SIBSIB Karaoke) และ SMK & SMKL & SMD (Sonic Karaoke) รวมถึงโปรแกรมใด ๆ ที่ใช้ถอดรหัสหรือหลบเลี่ยงระบบป้องกัน ของไฟล์ เพื่อเล่น แปลง คัดลอก หรือเผยแพร่คลังเพลงโดยไม่ได้รับอนุญาตจากเจ้าของลิขสิทธิ์\n\nIssue และ pull request ที่ขอให้รองรับการใช้งานดังกล่าวจะถูกปฏิเสธทันที ผู้ที่นำโค้ดไปใช้ หรือดัดแปลงเพื่อวัตถุประสงค์เหล่านี้ต้องรับผิดชอบการกระทำของตนเองแต่เพียงผู้เดียว ผู้พัฒนาและผู้มีส่วนร่วมจะไม่รับผิดชอบใด ๆ ทั้งสิ้น\n\nซอฟต์แวร์นี้ให้ไว้ “ตามสภาพ” (as is) โดยไม่มีการรับประกันใด ๆ ตามที่ระบุในสัญญาอนุญาต MIT ข้อความนี้ไม่ใช่คำแนะนำทางกฎหมาย โปรดตรวจสอบกฎหมายในประเทศของคุณ"
 
 msgid "Song Data"
 msgstr "ข้อมูลเพลง"
@@ -535,6 +544,9 @@ msgstr "KMID MIDI"
 
 msgid "KAR MIDI"
 msgstr "KAR MIDI"
+
+msgid "MKC MIDI"
+msgstr "MKC MIDI"
 
 msgid "Restore"
 msgstr "รีเซ็ต"
@@ -746,6 +758,9 @@ msgstr "คืนค่ามิดี้"
 msgid "Split MIDI"
 msgstr "แยกเสียงมิดี้"
 
+msgid "Tools"
+msgstr "เครื่องมือ"
+
 msgid "Metronome"
 msgstr "เมโทรนอม"
 
@@ -785,6 +800,15 @@ msgstr "พอร์ตเริ่มต้น"
 msgid "Reset to defaults"
 msgstr "ปรับค่าเริ่มต้น"
 
+msgid "Reset the song data folders to their defaults?"
+msgstr "ปรับค่าเริ่มต้นโฟลเดอร์ข้อมูลเพลงหรือไม่?"
+
+msgid "The selected NCN, KMID, KAR and MKC folders will be cleared."
+msgstr "โฟลเดอร์ NCN, KMID, KAR และ MKC ที่เลือกไว้จะถูกล้างออก"
+
+msgid "Reset"
+msgstr "คืนค่า"
+
 msgid "Default Port: {}"
 msgstr "พอร์ตเริ่มต้น: {}"
 
@@ -802,3 +826,414 @@ msgstr "ค้นหาอุปกรณ์ MIDI ใหม่"
 
 msgid "Could not open MIDI output: {}"
 msgstr "เปิดอุปกรณ์ MIDI ไม่สำเร็จ: {}"
+
+msgid "Instrument Group"
+msgstr "ช่องเครื่องดนตรี"
+
+msgid "Drum Channel"
+msgstr "ช่องกลอง"
+
+msgid "Drum"
+msgstr "กลอง"
+
+msgid "Kick"
+msgstr "กระเดื่อง"
+
+msgid "Snare"
+msgstr "สแนร์"
+
+msgid "Tom"
+msgstr "ทอม"
+
+msgid "Hi-hat"
+msgstr "ไฮแฮท"
+
+msgid "Cowbell"
+msgstr "คาวเบล"
+
+msgid "Cymbal"
+msgstr "ฉาบ"
+
+msgid "Hand Percussion"
+msgstr "เครื่องกระทบมือ"
+
+msgid "Misc Percussion"
+msgstr "เครื่องกระทบเบ็ดเตล็ด"
+
+msgid "Volume"
+msgstr "ความดัง"
+
+msgid "Velocity"
+msgstr "น้ำหนัก"
+
+msgid "Piano"
+msgstr "เปียโน"
+
+msgid "Chromatic Percussion"
+msgstr "เครื่องกระทบโทนเสียง"
+
+msgid "Organ"
+msgstr "ออร์แกน"
+
+msgid "Acoustic Guitar"
+msgstr "กีตาร์อะคูสติก"
+
+msgid "Clean Guitar"
+msgstr "กีตาร์คลีน"
+
+msgid "Jazz Guitar"
+msgstr "กีตาร์แจ๊ส"
+
+msgid "Overdrive Guitar"
+msgstr "กีตาร์โอเวอร์ไดรฟ์"
+
+msgid "Distortion Guitar"
+msgstr "กีตาร์ดิสทอร์ชัน"
+
+msgid "Bass"
+msgstr "เบส"
+
+msgid "Strings"
+msgstr "เครื่องสาย"
+
+msgid "Ensemble"
+msgstr "วงดนตรีรวมเสียง"
+
+msgid "Brass"
+msgstr "เครื่องทองเหลือง"
+
+msgid "Reed"
+msgstr "เครื่องเป่าลิ้น"
+
+msgid "Pipe"
+msgstr "เครื่องเป่าลม"
+
+msgid "Synth Lead"
+msgstr "ซินธ์ลีด"
+
+msgid "Synth Pad"
+msgstr "ซินธ์แพด"
+
+msgid "Synth Effects"
+msgstr "ซินธ์เอฟเฟกต์"
+
+msgid "Ethnic"
+msgstr "เครื่องดนตรีพื้นเมือง"
+
+msgid "Percussive"
+msgstr "เครื่องกระทบ"
+
+msgid "Sound Effects"
+msgstr "เสียงเอฟเฟกต์"
+
+msgid "MIDI Controller"
+msgstr "ตัวควบคุม MIDI"
+
+msgid "Mute"
+msgstr "ปิดเสียง"
+
+msgid "Unmute"
+msgstr "เปิดเสียง"
+
+msgid "Solo"
+msgstr "เล่นโซโล่"
+
+msgid "Unsolo"
+msgstr "ยกเลิกโซโล่"
+
+msgid "Mixer"
+msgstr "มิกเซอร์"
+
+msgid "Coming soon"
+msgstr "เร็ว ๆ นี้"
+
+msgid "Effects will be enabled in the next phase"
+msgstr "เอฟเฟคจะเปิดใช้งานในระยะถัดไป"
+
+msgid "Error handling"
+msgstr "จัดการข้อผิดพลาด"
+
+msgid "WAV rendering"
+msgstr "เขียนไฟล์ WAV"
+
+msgid "Image decoding"
+msgstr "ถอดรหัสรูปภาพ"
+
+msgid "MIDI ports"
+msgstr "พอร์ต MIDI"
+
+msgid "Song database"
+msgstr "ฐานข้อมูลเพลง"
+
+msgid "Embedded database"
+msgstr "ฐานข้อมูลฝังในโปรแกรม"
+
+msgid "Windows API"
+msgstr "Windows API"
+
+msgid "Windows registry"
+msgstr "Registry ของ Windows"
+
+msgid "Windows resources"
+msgstr "ทรัพยากร Windows"
+
+msgid "Instrument"
+msgstr "เครื่องดนตรี"
+
+msgid "Bank"
+msgstr "แบงก์"
+
+msgid "Pan"
+msgstr "แพนเสียง"
+
+msgid "Reverb"
+msgstr "รีเวิร์บ"
+
+msgid "Chorus"
+msgstr "คอรัส"
+
+msgid "Drum bank fixed"
+msgstr "ชุดกลองล็อกแบงก์"
+
+msgid "Change key"
+msgstr "เปลี่ยนคีย์"
+
+msgid "Raise semitone [1+]"
+msgstr "เพิ่มบันไดเสียง [1+]"
+
+msgid "Lower semitone [1-]"
+msgstr "ลดบันไดเสียง [1-]"
+
+msgid "Raise octave [12+]"
+msgstr "เพิ่มคู่เสียง [12+]"
+
+msgid "Lower octave [12-]"
+msgstr "ลดคู่เสียง [12-]"
+
+msgid "Reset key"
+msgstr "คืนค่าคีย์"
+
+msgid "Lock MIDI values"
+msgstr "ล็อคค่า MIDI"
+
+msgid "Unlock MIDI values"
+msgstr "ยกเลิกการล็อคค่า MIDI"
+
+msgid "MIDI Editor"
+msgstr "ตัวแก้ไข MIDI"
+
+msgid "Midi Track Editor"
+msgstr "แก้ไขแทร็ก MIDI"
+
+msgid "Track Name"
+msgstr "ชื่อแทร็ก"
+
+msgid "Patch Name"
+msgstr "ชื่อแพตช์"
+
+msgid "Save"
+msgstr "บันทึก"
+
+msgid "Save As"
+msgstr "บันทึกเป็น"
+
+msgid "Save MIDI"
+msgstr "บันทึก MIDI"
+
+msgid "Overwrite the original file?"
+msgstr "เขียนทับไฟล์ต้นฉบับหรือไม่?"
+
+msgid "Overwrite"
+msgstr "เขียนทับ"
+
+msgid "An existing file will be overwritten. Continue?"
+msgstr "ไฟล์ที่มีอยู่แล้วจะถูกเขียนทับ ดำเนินการต่อหรือไม่?"
+
+msgid "This file is outside the song folders."
+msgstr "ไฟล์นี้อยู่นอกโฟลเดอร์ข้อมูลเพลง"
+
+msgid "The original file outside the song folders will be overwritten. Continue?"
+msgstr "ไฟล์ต้นฉบับที่อยู่นอกโฟลเดอร์ข้อมูลเพลงจะถูกเขียนทับ ดำเนินการต่อหรือไม่?"
+
+msgid "Saved"
+msgstr "บันทึกแล้ว"
+
+msgid "Could not save the MIDI file: {}"
+msgstr "บันทึกไฟล์ MIDI ไม่สำเร็จ: {}"
+
+msgid "No song is loaded"
+msgstr "ยังไม่มีเพลงที่โหลดอยู่"
+
+msgid "Track {}"
+msgstr "แทร็ก {}"
+
+msgid "This track has no MIDI channel"
+msgstr "แทร็กนี้ไม่มีช่อง MIDI"
+
+msgid "Saved, but the song database could not be updated: {}"
+msgstr "บันทึกแล้ว แต่ไม่สามารถอัปเดตฐานข้อมูลเพลงได้: {}"
+
+msgid "File name"
+msgstr "ชื่อไฟล์"
+
+msgid "Song title"
+msgstr "ชื่อเพลง"
+
+msgid "Folder"
+msgstr "โฟลเดอร์"
+
+msgid "Enter a file name"
+msgstr "กรุณากรอกชื่อไฟล์"
+
+msgid "Saved as {}"
+msgstr "บันทึกเป็น {} แล้ว"
+
+msgid "Could not save as"
+msgstr "บันทึกเป็นไม่สำเร็จ"
+
+msgid "An existing file will be overwritten. Continue?"
+msgstr "ไฟล์นี้มีอยู่แล้ว ต้องการเขียนทับหรือไม่?"
+
+msgid "The NCN lyric/cursor files are missing"
+msgstr "ไม่พบไฟล์เนื้อเพลง/เคอร์เซอร์ของ NCN"
+
+msgid "Delete songs"
+msgstr "ลบเพลง"
+
+msgid "Delete the selected songs?"
+msgstr "ลบเพลงที่เลือกไว้หรือไม่?"
+
+msgid "{} selected"
+msgstr "เลือกไว้ {} เพลง"
+
+msgid "Delete from folder also removes the files from disk."
+msgstr "ลบออกจากโฟลเดอร์จะลบไฟล์ออกจากดิสก์ด้วย"
+
+msgid "Delete from folder"
+msgstr "ลบออกจากโฟลเดอร์"
+
+msgid "Remove from database"
+msgstr "ลบออกจากฐานข้อมูล"
+
+msgid "Delete {} songs…"
+msgstr "ลบเพลง {} เพลง…"
+
+msgid "Delete…"
+msgstr "ลบ…"
+
+msgid "Remove from the database or delete the files"
+msgstr "ลบออกจากฐานข้อมูลหรือลบไฟล์ออกจากโฟลเดอร์"
+
+msgid "Deleted {} songs"
+msgstr "ลบเพลงแล้ว {} เพลง"
+
+msgid "Removed {} songs from the database"
+msgstr "ลบออกจากฐานข้อมูลแล้ว {} เพลง"
+
+msgid "MKC Converter"
+msgstr "แปลง MKC"
+
+msgid "Choose file"
+msgstr "เลือกไฟล์"
+
+msgid "Include subfolders"
+msgstr "รวมโฟลเดอร์ย่อย"
+
+msgid "Text encoding"
+msgstr "การเข้ารหัสข้อความ"
+
+msgid "Automatic"
+msgstr "ตรวจอัตโนมัติ"
+
+msgid "Thai (Windows-874)"
+msgstr "ไทย (Windows-874)"
+
+msgid "Japanese (Shift-JIS)"
+msgstr "ญี่ปุ่น (Shift-JIS)"
+
+msgid "Chinese (GB18030)"
+msgstr "จีนตัวย่อ (GB18030)"
+
+msgid "Chinese (Big5)"
+msgstr "จีนตัวเต็ม (Big5)"
+
+msgid "Korean (EUC-KR)"
+msgstr "เกาหลี (EUC-KR)"
+
+msgid "Vietnamese (Windows-1258)"
+msgstr "เวียดนาม (Windows-1258)"
+
+msgid "Cyrillic (Windows-1251)"
+msgstr "ซีริลลิก (Windows-1251)"
+
+msgid "Latin-1"
+msgstr "ละติน-1"
+
+msgid "Auto tries UTF-8, then Shift-JIS, then Thai (Windows-874)"
+msgstr "อัตโนมัติจะลอง UTF-8 ก่อน แล้ว Shift-JIS แล้วจึงไทย (Windows-874)"
+
+msgid "Browse"
+msgstr "เลือก"
+
+msgid "Choose where the .mkc files should go"
+msgstr "เลือกที่เก็บไฟล์ .mkc"
+
+msgid "Overwrite existing .mkc files"
+msgstr "เขียนทับไฟล์ .mkc ที่มีอยู่"
+
+msgid "Convert to MKC"
+msgstr "แปลงเป็น MKC"
+
+msgid "Converting…"
+msgstr "กำลังแปลง…"
+
+msgid "Looking for karaoke songs…"
+msgstr "กำลังค้นหาไฟล์คาราโอเกะ…"
+
+msgid "Scanning… {} song(s) found"
+msgstr "กำลังสแกน… พบ {} เพลง"
+
+msgid "Converted {} song(s)"
+msgstr "แปลงแล้ว {} เพลง"
+
+msgid "Converted {} song(s), {} failed"
+msgstr "แปลงแล้ว {} เพลง, ล้มเหลว {} เพลง"
+
+msgid "Log"
+msgstr "บันทึก"
+
+msgid "Ready when you are."
+msgstr "พร้อมเมื่อคุณพร้อม"
+
+msgid "Conversion stopped unexpectedly"
+msgstr "การแปลงหยุดลงโดยไม่คาดคิด"
+
+msgid "Karaoke to MKC"
+msgstr "แปลงคาราโอเกะเป็น MKC"
+
+msgid "Source karaoke files"
+msgstr "แหล่งไฟล์คาราโอเกะ"
+
+msgid "No karaoke file or folder selected"
+msgstr "ยังไม่ได้เลือกไฟล์หรือโฟลเดอร์คาราโอเกะ"
+
+msgid "Choose a karaoke file or folder first"
+msgstr "เลือกไฟล์หรือโฟลเดอร์คาราโอเกะก่อน"
+
+msgid "Choose an output base folder first"
+msgstr "เลือกโฟลเดอร์ฐานปลายทางก่อน"
+
+msgid "Output base folder"
+msgstr "โฟลเดอร์ฐานปลายทาง"
+
+msgid "Files will be created under the MKC prefix folder"
+msgstr "ไฟล์จะถูกสร้างในโฟลเดอร์นำหน้า MKC"
+
+msgid "Choose a karaoke file"
+msgstr "เลือกไฟล์คาราโอเกะ"
+
+msgid "Choose output base folder"
+msgstr "เลือกโฟลเดอร์ฐานปลายทาง"
+
+msgid "MKC  ·  {} BPM  ·  {} lines"
+msgstr "MKC  ·  {} BPM  ·  {} บรรทัด"

@@ -52,7 +52,7 @@ struct Pending {
 /// trick). Only files that still have a valid-looking header and a first
 /// `MTrk` chunk are patched; anything else is left untouched for the real
 /// parser to reject.
-fn repair_altered_header(bytes: &[u8]) -> Option<Vec<u8>> {
+pub(crate) fn repair_altered_header(bytes: &[u8]) -> Option<Vec<u8>> {
     const MAGIC: &[u8] = b"MThd";
     if bytes.len() < 14 || &bytes[..4] == MAGIC {
         return None;

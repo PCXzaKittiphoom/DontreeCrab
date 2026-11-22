@@ -57,22 +57,30 @@ impl MidiReset {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "snake_case")]
 pub enum TextVisibility {
+    /// Existing settings that still say `center` migrate to the lower block.
     #[default]
-    Center,
-    Upper,
+    #[serde(alias = "center")]
     Lower,
+    Upper,
 }
 
 /// What fills the area behind the lyrics.
+/// Artwork behind the lyrics.
+///
+/// `Default` only exists so settings written before the background picker was
+/// simplified still load; [`Settings::sanitise`] migrates it to [`Self::Image`],
+/// which shows the artwork shipped with the player until an external image is
+/// chosen.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "snake_case")]
 pub enum BackgroundStyle {
-    /// The artwork shipped with the player.
-    #[default]
+    /// Legacy value: the artwork shipped with the player.
     Default,
     /// The flat `background_color` fill.
     Color,
-    /// An external .png/.jpg scaled to the window.
+    /// An external .png/.jpg scaled to the window, or the shipped artwork
+    /// when no file is selected.
+    #[default]
     Image,
 }
 
@@ -110,6 +118,8 @@ pub struct Settings {
     pub repeat: bool,
     /// Show the playlist panel.
     pub show_playlist: bool,
+    /// Keep the in-window MIDI Controller panel open across restarts.
+    pub controller_open: bool,
     /// Mute the karaoke melody track (MIDI channel 9, index 8).
     pub melo_muted: bool,
     /// Scale factor for the karaoke lyric font (1.0 = default).
@@ -155,6 +165,8 @@ pub struct Settings {
     pub music_interval_seconds: u32,
     /// Hide the mouse cursor while it is over the lyric display.
     pub hide_cursor: bool,
+    /// Hide the transport bar until the pointer reaches the bottom edge.
+    pub hide_transport: bool,
     /// Ask for confirmation before closing the player.
     pub confirm_exit: bool,
     /// Open the main window in fullscreen mode.
@@ -163,6 +175,8 @@ pub struct Settings {
     pub ncn_folder: Option<PathBuf>,
     pub kmid_folder: Option<PathBuf>,
     pub kar_folder: Option<PathBuf>,
+    /// Folder root for `.mkc` files.
+    pub mkc_folder: Option<PathBuf>,
     /// `#RRGGBB` colours for the unsung lyrics and the karaoke cursor.
     pub lyric_text_color: String,
     pub lyric_edge_color: String,
@@ -198,6 +212,30 @@ pub struct Settings {
     /// Per-channel MIDI output override (16 entries). An empty string follows
     /// the default port above.
     pub split_ports: Vec<String>,
+    /// Per-instrument-group MIDI output override (20 entries).
+    pub group_ports: Vec<String>,
+    /// Per-group volume switches (20 entries).
+    pub group_volume_on: Vec<bool>,
+    /// Per-group MIDI volume (0-127, 100 = unchanged).
+    pub group_volume: Vec<u32>,
+    /// Per-group velocity switches (20 entries).
+    pub group_velocity_on: Vec<bool>,
+    /// Per-group minimum note velocity (0-127).
+    pub group_velocity_min: Vec<u32>,
+    /// Per-group maximum note velocity (0-127).
+    pub group_velocity_max: Vec<u32>,
+    /// Per-drum-group MIDI output override (9 entries).
+    pub drum_ports: Vec<String>,
+    /// Per-drum-group MIDI volume (0-127, 100 = unchanged).
+    pub drum_volume: Vec<u32>,
+    /// Per-drum-group minimum note velocity (0-127).
+    pub drum_velocity_min: Vec<u32>,
+    /// Per-drum-group maximum note velocity (0-127).
+    pub drum_velocity_max: Vec<u32>,
+    /// Per-drum-group volume switches (9 entries).
+    pub drum_volume_on: Vec<bool>,
+    /// Per-drum-group velocity switches (9 entries).
+    pub drum_velocity_on: Vec<bool>,
     /// Force every bass program to `lock_bass_program`.
     pub lock_bass: bool,
     /// General MIDI program (1-based, 34 = Electric Bass finger).
@@ -228,17 +266,18 @@ impl Default for Settings {
             soundfont: None,
             repeat: true,
             show_playlist: true,
+            controller_open: false,
             melo_muted: false,
             font_scale: 1.0,
             lyric_edge_size: 1.0,
             lyric_distance: 1.0,
-            text_visibility: TextVisibility::Center,
+            text_visibility: TextVisibility::Lower,
             cursor_visibility: CursorVisibility::ModernUpper,
             lyric_font_style: FontStyle::Regular,
             lyric_font: None,
             lyric_depth: 0.0,
             background_color: "#000000".to_owned(),
-            background_style: BackgroundStyle::Default,
+            background_style: BackgroundStyle::Image,
             background_image: None,
             indicator_seconds: 5,
             playlist_seconds: 10,
@@ -250,11 +289,13 @@ impl Default for Settings {
             auto_play: true,
             music_interval_seconds: 0,
             hide_cursor: false,
+            hide_transport: false,
             confirm_exit: true,
             fullscreen: false,
             ncn_folder: None,
             kmid_folder: None,
             kar_folder: None,
+            mkc_folder: None,
             lyric_text_color: "#FFFFFF".to_owned(),
             lyric_edge_color: "#000000".to_owned(),
             cursor_text_color: "#0000FF".to_owned(),
@@ -276,6 +317,18 @@ impl Default for Settings {
             midi_reset: MidiReset::default(),
             midi_out_port: String::new(),
             split_ports: vec![String::new(); 16],
+            group_ports: vec![String::new(); 20],
+            group_volume_on: vec![false; 20],
+            group_volume: vec![100; 20],
+            group_velocity_on: vec![false; 20],
+            group_velocity_min: vec![0; 20],
+            group_velocity_max: vec![127; 20],
+            drum_ports: vec![String::new(); 9],
+            drum_volume: vec![100; 9],
+            drum_velocity_min: vec![0; 9],
+            drum_velocity_max: vec![127; 9],
+            drum_volume_on: vec![false; 9],
+            drum_velocity_on: vec![false; 9],
             lock_bass: false,
             lock_bass_program: 34,
             lock_drum_kit: false,
@@ -319,7 +372,15 @@ impl Settings {
         };
         // Tolerate a UTF-8 BOM (some editors add one).
         let text = text.trim_start_matches('\u{feff}');
-        let mut settings: Self = serde_json::from_str(text).unwrap_or_default();
+        let mut settings: Self = match serde_json::from_str(text) {
+            Ok(settings) => settings,
+            Err(_) => {
+                // Keep the unreadable file for inspection instead of silently
+                // overwriting it on the next save.
+                let _ = std::fs::copy(&path, path.with_extension("json.broken"));
+                Self::default()
+            }
+        };
         settings.sanitise();
         settings
     }
@@ -333,13 +394,68 @@ impl Settings {
                 .with_context(|| format!("creating {}", parent.display()))?;
         }
         let text = serde_json::to_string_pretty(self)?;
-        std::fs::write(&path, text).with_context(|| format!("writing {}", path.display()))?;
+        // Write a temporary file first: a crash mid-write must not leave a
+        // half-written settings file behind.
+        let tmp = path.with_extension("tmp");
+        std::fs::write(&tmp, text).with_context(|| format!("writing {}", tmp.display()))?;
+        // Windows refuses to rename onto an existing file.
+        if path.exists() {
+            let _ = std::fs::remove_file(&path);
+        }
+        std::fs::rename(&tmp, &path).with_context(|| format!("replacing {}", path.display()))?;
         Ok(())
     }
 
     pub fn sanitise(&mut self) {
         self.split_ports.resize(16, String::new());
         self.split_ports.truncate(16);
+        self.group_ports.resize(20, String::new());
+        self.group_ports.truncate(20);
+        self.group_volume.resize(20, 100);
+        self.group_volume.truncate(20);
+        self.group_volume_on.resize(20, false);
+        self.group_volume_on.truncate(20);
+        self.group_velocity_on.resize(20, false);
+        self.group_velocity_on.truncate(20);
+        self.group_velocity_min.resize(20, 0);
+        self.group_velocity_min.truncate(20);
+        self.group_velocity_max.resize(20, 127);
+        self.group_velocity_max.truncate(20);
+        for value in &mut self.group_volume {
+            *value = (*value).min(127);
+        }
+        for (index, value) in self.group_velocity_min.iter_mut().enumerate() {
+            *value = (*value).min(127);
+            // Keep the window ordered even after a hand-edited settings file.
+            let max = self.group_velocity_max[index];
+            *value = (*value).min(max);
+        }
+        for value in &mut self.group_velocity_max {
+            *value = (*value).min(127);
+        }
+        self.drum_ports.resize(9, String::new());
+        self.drum_ports.truncate(9);
+        self.drum_volume.resize(9, 100);
+        self.drum_volume.truncate(9);
+        self.drum_volume_on.resize(9, false);
+        self.drum_volume_on.truncate(9);
+        self.drum_velocity_on.resize(9, false);
+        self.drum_velocity_on.truncate(9);
+        self.drum_velocity_min.resize(9, 0);
+        self.drum_velocity_min.truncate(9);
+        self.drum_velocity_max.resize(9, 127);
+        self.drum_velocity_max.truncate(9);
+        for value in &mut self.drum_volume {
+            *value = (*value).min(127);
+        }
+        for (index, value) in self.drum_velocity_min.iter_mut().enumerate() {
+            *value = (*value).min(127);
+            let max = self.drum_velocity_max[index];
+            *value = (*value).min(max);
+        }
+        for value in &mut self.drum_velocity_max {
+            *value = (*value).min(127);
+        }
         if !self.volume.is_finite() {
             self.volume = 0.7;
         }
@@ -378,9 +494,16 @@ impl Settings {
 
         self.indicator_seconds = self.indicator_seconds.min(60);
         self.playlist_seconds = self.playlist_seconds.min(60);
+        self.popup_seconds = self.popup_seconds.min(60);
         self.music_interval_seconds = self.music_interval_seconds.min(10);
 
         normalise_hex(&mut self.background_color, "#000000");
+        // The picker now offers only Image and Color. Older settings used
+        // "default" for the shipped artwork, which is what Image shows while
+        // no external file is selected.
+        if self.background_style == BackgroundStyle::Default {
+            self.background_style = BackgroundStyle::Image;
+        }
         normalise_hex(&mut self.lyric_text_color, "#FFFFFF");
         normalise_hex(&mut self.lyric_edge_color, "#000000");
         normalise_hex(&mut self.cursor_text_color, "#0000FF");
@@ -467,7 +590,13 @@ mod tests {
         settings.transpose = -3;
         settings.melo_muted = true;
         settings.fullscreen = true;
+        settings.controller_open = true;
+        settings.group_volume_on[0] = true;
+        settings.group_velocity_on[1] = true;
+        settings.drum_volume_on[2] = true;
+        settings.drum_velocity_on[3] = true;
         settings.ncn_folder = Some(PathBuf::from(r"C:\Songs\NCN"));
+        settings.mkc_folder = Some(PathBuf::from(r"C:\Songs\MKC"));
 
         let text = serde_json::to_string(&settings).unwrap();
         let back: Settings = serde_json::from_str(&text).unwrap();
@@ -475,7 +604,14 @@ mod tests {
         assert_eq!(back.transpose, -3);
         assert!(back.melo_muted);
         assert!(back.fullscreen);
+        assert!(back.controller_open);
+        assert!(back.group_volume_on[0]);
+        assert!(!back.group_volume_on[1]);
+        assert!(back.group_velocity_on[1]);
+        assert!(back.drum_volume_on[2]);
+        assert!(back.drum_velocity_on[3]);
         assert_eq!(back.ncn_folder, Some(PathBuf::from(r"C:\Songs\NCN")));
+        assert_eq!(back.mkc_folder, Some(PathBuf::from(r"C:\Songs\MKC")));
     }
 
     #[test]
@@ -508,6 +644,13 @@ mod tests {
         assert_eq!(back.transpose, 0);
         assert!(back.repeat);
         assert!(!back.fullscreen);
+        assert!(!back.controller_open);
+        assert_eq!(back.mkc_folder, None);
+        // Old settings files start with every group adjustment off.
+        assert!(back.group_volume_on.iter().all(|value| !*value));
+        assert!(back.group_velocity_on.iter().all(|value| !*value));
+        assert!(back.drum_volume_on.iter().all(|value| !*value));
+        assert!(back.drum_velocity_on.iter().all(|value| !*value));
     }
 
     #[test]
@@ -524,6 +667,20 @@ mod tests {
         settings.volume = f32::NAN;
         settings.sanitise();
         assert!((settings.volume - 0.7).abs() < 1e-6);
+
+        settings.group_volume = vec![200; 20];
+        settings.group_ports = vec!["port".to_owned(); 25];
+        settings.sanitise();
+        assert!(settings.group_volume.iter().all(|value| *value == 127));
+        assert_eq!(settings.group_ports.len(), 20);
+
+        settings.drum_volume = vec![200; 9];
+        settings.drum_ports = vec!["port".to_owned(); 12];
+        settings.drum_volume_on = vec![true; 12];
+        settings.sanitise();
+        assert!(settings.drum_volume.iter().all(|value| *value == 127));
+        assert_eq!(settings.drum_ports.len(), 9);
+        assert_eq!(settings.drum_volume_on.len(), 9);
     }
 
     #[test]
@@ -554,9 +711,21 @@ mod tests {
     }
 
     #[test]
+    fn old_centred_lyrics_migrate_to_the_lower_block() {
+        assert_eq!(
+            serde_json::from_str::<TextVisibility>("\"center\"").unwrap(),
+            TextVisibility::Lower
+        );
+        assert_eq!(
+            serde_json::from_str::<TextVisibility>("\"upper\"").unwrap(),
+            TextVisibility::Upper
+        );
+    }
+
+    #[test]
     fn lyric_display_defaults_and_hex() {
         let mut settings = Settings::default();
-        assert_eq!(settings.text_visibility, TextVisibility::Center);
+        assert_eq!(settings.text_visibility, TextVisibility::Lower);
         assert_eq!(settings.cursor_visibility, CursorVisibility::ModernUpper);
         assert_eq!(settings.lyric_font_style, FontStyle::Regular);
         assert!(settings.lyric_font.is_none());
@@ -584,6 +753,21 @@ mod tests {
         settings.sanitise();
         assert!(settings.lyric_font.is_none());
         assert_eq!(settings.lyric_font_style, FontStyle::Regular);
+    }
+
+    #[test]
+    fn legacy_default_background_migrates_to_image() {
+        let mut settings = Settings::default();
+        assert_eq!(settings.background_style, BackgroundStyle::Image);
+
+        // Settings files written before the picker was simplified still load,
+        // then migrate to the image style (which shows the shipped artwork
+        // until the user picks a file).
+        let style: BackgroundStyle = serde_json::from_str("\"default\"").unwrap();
+        assert_eq!(style, BackgroundStyle::Default);
+        settings.background_style = BackgroundStyle::Default;
+        settings.sanitise();
+        assert_eq!(settings.background_style, BackgroundStyle::Image);
     }
 
     #[test]

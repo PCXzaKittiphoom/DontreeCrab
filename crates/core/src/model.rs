@@ -9,6 +9,8 @@ pub enum SourceFormat {
     Kar,
     Ncn,
     Kmid,
+    /// MKC: a ZIP-based MIDI Karaoke Container.
+    Mkc,
     /// An ordinary MIDI file that could not be identified as a karaoke
     /// format (no lyrics, KAR marker, NCN companions or `LyrHdr` payload).
     Midi,

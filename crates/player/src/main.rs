@@ -1,3 +1,7 @@
+// Release builds are GUI programs: double-clicking the executable must not
+// flash a console window. CLI runs re-attach to the parent console below.
+#![cfg_attr(all(windows, not(debug_assertions)), windows_subsystem = "windows")]
+
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -12,6 +16,7 @@ use karaoke_player::text::EncodingChoice;
 use karaoke_player::{EventKind, LoadOptions, SourceFormat, load, soundfont};
 
 mod assoc;
+mod fonts;
 mod gui;
 mod icons;
 
@@ -61,11 +66,12 @@ enum FormatArg {
     Ncn,
     Kmid,
     Midi,
+    Mkc,
 }
 
 #[derive(Args)]
 struct Common {
-    /// Song file (.kar, .mid or .midi)
+    /// Song file (.kar, .mid, .midi, .mkc)
     file: PathBuf,
 
     /// Text encoding for lyric data
@@ -94,6 +100,7 @@ impl Common {
                 FormatArg::Ncn => SourceFormat::Ncn,
                 FormatArg::Kmid => SourceFormat::Kmid,
                 FormatArg::Midi => SourceFormat::Midi,
+                FormatArg::Mkc => SourceFormat::Mkc,
             }),
             lyrics: self.lyrics.clone(),
             cursor: self.cursor.clone(),
@@ -191,7 +198,7 @@ struct RenderArgs {
 }
 
 fn main() -> Result<()> {
-    hide_own_console();
+    prepare_console();
     let cli = Cli::parse();
     match cli.command {
         // No subcommand means the user launched the executable directly, so
@@ -221,26 +228,53 @@ fn main() -> Result<()> {
     }
 }
 
-/// Hide the console window that Windows creates when the GUI executable is
-/// started by double-clicking. If the process shares a console with a shell
-/// (`cargo run`, cmd or PowerShell), leave it alone so CLI output stays visible.
-#[cfg(windows)]
-fn hide_own_console() {
-    use windows_sys::Win32::System::Console::{GetConsoleProcessList, GetConsoleWindow};
-    use windows_sys::Win32::UI::WindowsAndMessaging::{SW_HIDE, ShowWindow};
+/// Attach to the console of the shell that started us so CLI commands still
+/// print, while a plain double-click (no arguments) shows no console at all.
+#[cfg(all(windows, not(debug_assertions)))]
+fn prepare_console() {
+    use windows_sys::Win32::Foundation::INVALID_HANDLE_VALUE;
+    use windows_sys::Win32::Storage::FileSystem::{
+        CreateFileW, FILE_GENERIC_WRITE, FILE_SHARE_READ, FILE_SHARE_WRITE, OPEN_EXISTING,
+    };
+    use windows_sys::Win32::System::Console::{
+        ATTACH_PARENT_PROCESS, AttachConsole, GetStdHandle, STD_ERROR_HANDLE, STD_OUTPUT_HANDLE,
+        SetStdHandle,
+    };
 
-    let mut processes = [0u32; 2];
-    let count = unsafe { GetConsoleProcessList(processes.as_mut_ptr(), processes.len() as u32) };
-    if count == 1 {
-        let window = unsafe { GetConsoleWindow() };
-        if !window.is_null() {
-            unsafe { ShowWindow(window, SW_HIDE) };
+    // Only commands need a console; the GUI is launched without arguments.
+    if std::env::args_os().len() <= 1 {
+        return;
+    }
+    unsafe {
+        // A redirected or inherited handle already works: leave it alone so
+        // `DontreeCrab.exe info song.kar > out.txt` keeps working.
+        let existing = GetStdHandle(STD_OUTPUT_HANDLE);
+        if !existing.is_null() && existing != INVALID_HANDLE_VALUE {
+            return;
+        }
+        if AttachConsole(ATTACH_PARENT_PROCESS) == 0 {
+            return;
+        }
+        let name: Vec<u16> = "CONOUT$".encode_utf16().chain(std::iter::once(0)).collect();
+        let handle = CreateFileW(
+            name.as_ptr(),
+            FILE_GENERIC_WRITE,
+            FILE_SHARE_READ | FILE_SHARE_WRITE,
+            std::ptr::null(),
+            OPEN_EXISTING,
+            0,
+            std::ptr::null_mut(),
+        );
+        if handle != INVALID_HANDLE_VALUE {
+            SetStdHandle(STD_OUTPUT_HANDLE, handle);
+            SetStdHandle(STD_ERROR_HANDLE, handle);
         }
     }
 }
 
-#[cfg(not(windows))]
-fn hide_own_console() {}
+/// Debug builds keep the console subsystem, so there is nothing to do.
+#[cfg(not(all(windows, not(debug_assertions))))]
+fn prepare_console() {}
 
 fn cmd_info(args: Common) -> Result<()> {
     let song = args.song()?;
@@ -527,6 +561,7 @@ fn format_name(format: SourceFormat) -> &'static str {
         SourceFormat::Ncn => "NCN (Nick Karaoke)",
         SourceFormat::Kmid => "KMID (embedded lyrics)",
         SourceFormat::Midi => "MIDI (plain)",
+        SourceFormat::Mkc => "MKC (MIDI Karaoke Container)",
     }
 }
 

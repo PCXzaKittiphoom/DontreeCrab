@@ -1,18 +1,58 @@
 use std::path::{Path, PathBuf};
 
 use anyhow::{Result, bail};
+use encoding_rs::WINDOWS_874;
 
 use crate::lyrics::{build_lines, is_control_marker};
 use crate::midi::MidiDoc;
+use crate::midi_write::write_atomic;
 use crate::model::{Song, SourceFormat};
 use crate::text::{EncodingChoice, decode};
+
+/// Rewrite the title, artist and key header of an NCN `.lyr` file.
+///
+/// The rest of the lyric body is preserved byte-for-byte in its original
+/// encoding (UTF-8 stays UTF-8, otherwise Windows-874 is used).
+pub fn rewrite_lyr_metadata(path: &Path, title: &str, artist: &str, key: &str) -> Result<()> {
+    let bytes = std::fs::read(path)?;
+    let utf8 = std::str::from_utf8(&bytes).is_ok();
+    let text = decode(&bytes, EncodingChoice::Auto);
+    let crlf = text.contains("\r\n");
+    let had_trailing = text.ends_with('\n');
+    let mut lines: Vec<String> = text.lines().map(str::to_owned).collect();
+    while lines.len() < 4 {
+        lines.push(String::new());
+    }
+    let title = title.trim();
+    let artist = artist.trim();
+    let key = key.trim();
+    lines[0] = if key.is_empty() {
+        title.to_owned()
+    } else {
+        format!("{title} ( {key} )")
+    };
+    lines[1] = artist.to_owned();
+    lines[2] = key.to_owned();
+    let separator = if crlf { "\r\n" } else { "\n" };
+    let mut out = lines.join(separator);
+    if had_trailing {
+        out.push_str(separator);
+    }
+    let encoded = if utf8 {
+        out.into_bytes()
+    } else {
+        WINDOWS_874.encode(&out).0.into_owned()
+    };
+    write_atomic(path, &encoded)?;
+    Ok(())
+}
 
 /// Nick Karaoke stores one song as three files that live in parallel trees:
 ///
 /// ```text
-/// NCN/Song/1/00001.mid
-/// NCN/Lyrics/1/00001.lyr
-/// NCN/Cursor/1/00001.cur
+/// NCN/Song/1/1001.mid
+/// NCN/Lyrics/1/1001.lyr
+/// NCN/Cursor/1/1001.cur
 /// ```
 ///
 /// The cursor file holds one little-endian `u16` per *displayed character*,
@@ -27,6 +67,17 @@ pub fn locate(mid: &Path, opts: &crate::LoadOptions) -> Option<(PathBuf, PathBuf
     let lyr = find_part(mid, "Lyrics", "lyr", opts.lyrics.as_deref())?;
     let cur = find_part(mid, "Cursor", "cur", opts.cursor.as_deref())?;
     Some((lyr, cur))
+}
+
+/// Existing lyric and cursor companions of an NCN `.mid`.
+///
+/// Used when the user deletes a song from its folder, so the `.lyr` and
+/// `.cur` files are not left behind in the Lyrics/Cursor trees.
+pub fn companions(mid: &Path) -> Vec<PathBuf> {
+    [("Lyrics", "lyr"), ("Cursor", "cur")]
+        .into_iter()
+        .filter_map(|(dir, ext)| find_part(mid, dir, ext, None))
+        .collect()
 }
 
 fn find_part(mid: &Path, dir: &str, ext: &str, explicit: Option<&Path>) -> Option<PathBuf> {
@@ -226,4 +277,41 @@ fn clean_title(title: &str, key: Option<&str>) -> String {
         }
     }
     title.to_owned()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn finds_lyric_and_cursor_companions() {
+        let unique = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!("dontreecrab-ncn-{unique}"));
+        let song = root.join("Song").join("1");
+        std::fs::create_dir_all(&song).unwrap();
+        let mid = song.join("1001.mid");
+        std::fs::write(&mid, b"x").unwrap();
+        std::fs::create_dir_all(root.join("Lyrics").join("1")).unwrap();
+        std::fs::write(root.join("Lyrics").join("1").join("1001.lyr"), b"x").unwrap();
+        std::fs::create_dir_all(root.join("Cursor").join("1")).unwrap();
+        std::fs::write(root.join("Cursor").join("1").join("1001.cur"), b"x").unwrap();
+
+        let found = companions(&mid);
+        assert_eq!(found.len(), 2);
+        assert!(
+            found
+                .iter()
+                .any(|path| path.extension().is_some_and(|ext| ext == "lyr"))
+        );
+        assert!(
+            found
+                .iter()
+                .any(|path| path.extension().is_some_and(|ext| ext == "cur"))
+        );
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
 }

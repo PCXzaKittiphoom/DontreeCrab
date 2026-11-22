@@ -26,6 +26,14 @@ pub struct LoadOptions {
 /// when its companions can be found; otherwise a file with an embedded
 /// `LyrHdr` payload is KMID, and anything left is an ordinary MIDI/KAR file.
 pub fn load(path: &Path, opts: &LoadOptions) -> Result<Song> {
+    let extension = path
+        .extension()
+        .map(|e| e.to_string_lossy().to_ascii_lowercase())
+        .unwrap_or_default();
+    if extension == "mkc" || opts.format == Some(SourceFormat::Mkc) {
+        return crate::mkc::load_song(path, opts);
+    }
+
     let bytes = std::fs::read(path).with_context(|| format!("reading {}", path.display()))?;
     let doc = midi::parse(&bytes, opts.encoding)
         .with_context(|| format!("parsing MIDI data in {}", path.display()))?;
@@ -33,10 +41,6 @@ pub fn load(path: &Path, opts: &LoadOptions) -> Result<Song> {
     let forced_ncn = opts.format == Some(SourceFormat::Ncn);
     let forced_kmid = opts.format == Some(SourceFormat::Kmid);
     let forced_midi = opts.format == Some(SourceFormat::Midi);
-    let extension = path
-        .extension()
-        .map(|e| e.to_string_lossy().to_ascii_lowercase())
-        .unwrap_or_default();
 
     // A complete NCN trio is the strongest signal. Some collections keep the
     // embedded KMID payload in the .mid as well as the .lyr/.cur companions;

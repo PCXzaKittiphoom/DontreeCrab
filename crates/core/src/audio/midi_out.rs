@@ -115,6 +115,56 @@ impl MidiOut {
     }
 }
 
+/// Number of General MIDI instrument groups used by the Split MIDI window.
+pub const GROUPS: usize = 20;
+
+/// General MIDI instrument group for a program number (0-127).
+///
+/// The ten GM families map to eight groups each, except the guitar family
+/// (programs 24-31), which the player splits into five groups.
+pub fn program_group(program: u8) -> usize {
+    match program {
+        0..=23 => usize::from(program) / 8,
+        24..=25 => 3, // Acoustic Guitar
+        26 => 5,      // Jazz Guitar
+        27..=28 => 4, // Clean Guitar
+        29 => 6,      // Overdrive Guitar
+        30..=31 => 7, // Distortion Guitar
+        _ => 8 + usize::from(program - 32) / 8,
+    }
+}
+
+/// Number of General MIDI drum groups used by the Split MIDI window.
+pub const DRUM_GROUPS: usize = 9;
+
+/// Drum group for a General MIDI percussion note (channel 10).
+///
+/// The notes follow the standard GM percussion map. Notes that are not listed
+/// here keep following the drum channel's own output.
+pub fn drum_group(note: u8) -> Option<usize> {
+    match note {
+        // Kick
+        35 | 36 => Some(0),
+        // Snare
+        31 | 34 | 37 | 38 | 40 => Some(1),
+        // Tom
+        41 | 43 | 45 | 47 | 48 | 50 => Some(2),
+        // Hi-hat
+        42 | 44 | 46 => Some(3),
+        // Cowbell
+        56 => Some(4),
+        // Cymbal
+        49 | 51 | 52 | 53 | 55 | 57 | 59 => Some(5),
+        // Hand percussion
+        60..=66 | 86 | 87 => Some(6),
+        // Misc percussion
+        27..=30 | 32 | 33 | 39 | 54 | 58 | 67..=74 | 77..=85 => Some(7),
+        // Metronome
+        75 | 76 => Some(8),
+        _ => None,
+    }
+}
+
 /// Settings value that pins a channel to the built-in synthesizer.
 ///
 /// An empty string means "follow the default output"; this marker keeps a
@@ -142,6 +192,10 @@ pub struct MidiRouting {
     default: Option<usize>,
     /// Per-channel choice.
     channels: [ChannelRoute; 16],
+    /// Per-group choice (`None` = follow the channel).
+    groups: [Option<usize>; GROUPS],
+    /// Per-drum-group choice (`None` = follow the drum channel).
+    drums: [Option<usize>; DRUM_GROUPS],
 }
 
 impl fmt::Debug for MidiRouting {
@@ -151,6 +205,8 @@ impl fmt::Debug for MidiRouting {
             .field("outputs", &names)
             .field("default", &self.default)
             .field("channels", &self.channels)
+            .field("groups", &self.groups)
+            .field("drums", &self.drums)
             .finish()
     }
 }
@@ -162,6 +218,8 @@ impl MidiRouting {
             outputs: Vec::new(),
             default: None,
             channels: [ChannelRoute::Default; 16],
+            groups: [None; GROUPS],
+            drums: [None; DRUM_GROUPS],
         }
     }
 
@@ -169,7 +227,12 @@ impl MidiRouting {
     ///
     /// An empty name means the built-in synthesizer. A port that cannot be
     /// opened fails the whole routing so the caller can report it.
-    pub fn open(default: &str, channels: &[String; 16]) -> std::result::Result<Self, String> {
+    pub fn open(
+        default: &str,
+        channels: &[String; 16],
+        groups: &[String; GROUPS],
+        drums: &[String; DRUM_GROUPS],
+    ) -> std::result::Result<Self, String> {
         let mut outputs = Vec::new();
         let mut default_index = None;
         let default = default.trim();
@@ -188,11 +251,70 @@ impl MidiRouting {
                 ChannelRoute::Output(index_or_open(&mut outputs, name)?)
             };
         }
+        let mut group_routes = [None; GROUPS];
+        for (group, name) in groups.iter().enumerate() {
+            let name = name.trim();
+            if name.is_empty() {
+                continue;
+            }
+            group_routes[group] = if name.eq_ignore_ascii_case(INTERNAL_PORT) {
+                // Pinned to the synth: keep the group off every output.
+                Some(usize::MAX)
+            } else {
+                Some(index_or_open(&mut outputs, name)?)
+            };
+        }
+        let mut drum_routes = [None; DRUM_GROUPS];
+        for (group, name) in drums.iter().enumerate() {
+            let name = name.trim();
+            if name.is_empty() {
+                continue;
+            }
+            drum_routes[group] = if name.eq_ignore_ascii_case(INTERNAL_PORT) {
+                Some(usize::MAX)
+            } else {
+                Some(index_or_open(&mut outputs, name)?)
+            };
+        }
         Ok(Self {
             outputs,
             default: default_index,
             channels: channel_routes,
+            groups: group_routes,
+            drums: drum_routes,
         })
+    }
+
+    /// Route for one melodic channel playing `program`.
+    ///
+    /// An instrument group wins over the channel table; the channel table wins
+    /// over the default output.
+    pub fn route_for(&self, channel: usize, program: u8) -> Option<usize> {
+        if channel != 9 {
+            match self.groups.get(program_group(program)).copied().flatten() {
+                Some(index) if index == usize::MAX => return None,
+                Some(index) => return Some(index),
+                None => {}
+            }
+        }
+        self.route(channel)
+    }
+
+    /// Route for one drum note on channel 10.
+    ///
+    /// A drum group wins over the channel table; unlisted notes keep following
+    /// the channel's own output.
+    pub fn route_for_drum(&self, note: u8) -> Option<usize> {
+        if let Some(group) = drum_group(note)
+            && let Some(index) = self.drums.get(group).copied().flatten()
+        {
+            return if index == usize::MAX {
+                None
+            } else {
+                Some(index)
+            };
+        }
+        self.route(9)
     }
 
     /// True when no output port is open at all.
@@ -262,4 +384,125 @@ fn index_or_open(outputs: &mut Vec<MidiOut>, name: &str) -> std::result::Result<
     let out = MidiOut::open(name).map_err(|err| format!("{err:#}"))?;
     outputs.push(out);
     Ok(outputs.len() - 1)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn maps_programs_to_the_twenty_groups() {
+        assert_eq!(program_group(0), 0);
+        assert_eq!(program_group(7), 0);
+        assert_eq!(program_group(8), 1);
+        assert_eq!(program_group(23), 2);
+        // The guitar family is split into five groups.
+        assert_eq!(program_group(24), 3);
+        assert_eq!(program_group(25), 3);
+        assert_eq!(program_group(26), 5);
+        assert_eq!(program_group(27), 4);
+        assert_eq!(program_group(28), 4);
+        assert_eq!(program_group(29), 6);
+        assert_eq!(program_group(30), 7);
+        assert_eq!(program_group(31), 7);
+        assert_eq!(program_group(32), 8);
+        assert_eq!(program_group(39), 8);
+        assert_eq!(program_group(40), 9);
+        assert_eq!(program_group(120), 19);
+        assert_eq!(program_group(127), 19);
+    }
+
+    fn routing() -> MidiRouting {
+        MidiRouting {
+            outputs: Vec::new(),
+            default: None,
+            channels: [ChannelRoute::Output(0); 16],
+            groups: [None; GROUPS],
+            drums: [None; DRUM_GROUPS],
+        }
+    }
+
+    #[test]
+    fn maps_drum_notes_to_the_nine_groups() {
+        for note in [35, 36] {
+            assert_eq!(drum_group(note), Some(0), "kick {note}");
+        }
+        for note in [31, 34, 37, 38, 40] {
+            assert_eq!(drum_group(note), Some(1), "snare {note}");
+        }
+        for note in [41, 43, 45, 47, 48, 50] {
+            assert_eq!(drum_group(note), Some(2), "tom {note}");
+        }
+        for note in [42, 44, 46] {
+            assert_eq!(drum_group(note), Some(3), "hi-hat {note}");
+        }
+        assert_eq!(drum_group(56), Some(4));
+        for note in [49, 51, 52, 53, 55, 57, 59] {
+            assert_eq!(drum_group(note), Some(5), "cymbal {note}");
+        }
+        for note in [60, 61, 62, 63, 64, 65, 66, 86, 87] {
+            assert_eq!(drum_group(note), Some(6), "hand percussion {note}");
+        }
+        for note in [
+            27, 28, 29, 30, 32, 33, 39, 54, 58, 67, 68, 69, 70, 71, 72, 73, 74, 77, 78, 79, 80, 81,
+            82, 83, 84, 85,
+        ] {
+            assert_eq!(drum_group(note), Some(7), "misc percussion {note}");
+        }
+        assert_eq!(drum_group(75), Some(8));
+        assert_eq!(drum_group(76), Some(8));
+        // Notes outside the list keep following the channel.
+        assert_eq!(drum_group(0), None);
+        assert_eq!(drum_group(88), None);
+    }
+
+    #[test]
+    fn a_drum_group_wins_over_the_drum_channel() {
+        let mut routing = routing();
+        routing.drums[0] = Some(1);
+        assert_eq!(routing.route_for_drum(35), Some(1));
+        assert_eq!(routing.route_for_drum(36), Some(1));
+        // A snare still follows the channel.
+        assert_eq!(routing.route_for_drum(38), Some(0));
+    }
+
+    #[test]
+    fn a_drum_group_can_force_the_built_in_synth() {
+        let mut routing = routing();
+        routing.drums[3] = Some(usize::MAX);
+        assert_eq!(routing.route_for_drum(42), None);
+    }
+
+    #[test]
+    fn unlisted_drum_notes_follow_the_channel() {
+        let mut routing = routing();
+        routing.drums[0] = Some(1);
+        routing.default = Some(2);
+        routing.channels[9] = ChannelRoute::Default;
+        assert_eq!(routing.route_for_drum(88), Some(2));
+        assert_eq!(routing.route_for_drum(35), Some(1));
+    }
+
+    #[test]
+    fn a_group_wins_over_the_channel() {
+        let mut routing = routing();
+        routing.groups[0] = Some(1);
+        assert_eq!(routing.route_for(0, 0), Some(1));
+        // Programs outside that group still follow the channel.
+        assert_eq!(routing.route_for(0, 8), Some(0));
+    }
+
+    #[test]
+    fn a_group_can_force_the_built_in_synth() {
+        let mut routing = routing();
+        routing.groups[0] = Some(usize::MAX);
+        assert_eq!(routing.route_for(0, 0), None);
+    }
+
+    #[test]
+    fn the_drum_channel_ignores_the_groups() {
+        let mut routing = routing();
+        routing.groups[0] = Some(1);
+        assert_eq!(routing.route_for(9, 0), Some(0));
+    }
 }

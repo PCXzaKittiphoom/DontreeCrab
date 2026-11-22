@@ -330,6 +330,21 @@ impl Library {
         Ok(())
     }
 
+    /// Remove specific songs by their file path.
+    ///
+    /// The caller decides whether the files themselves should be deleted;
+    /// this only updates the database.
+    pub fn delete_paths(&mut self, paths: &[PathBuf]) -> Result<usize> {
+        let tx = self.conn.transaction()?;
+        let mut removed = 0;
+        for path in paths {
+            let path = path.to_string_lossy();
+            removed += tx.execute("DELETE FROM songs WHERE path = ?1", [path.as_ref()])?;
+        }
+        tx.commit()?;
+        Ok(removed)
+    }
+
     /// Every row in browse order.
     pub fn songs(&self) -> Result<Vec<SongRecord>> {
         self.load_songs()
@@ -859,7 +874,8 @@ fn is_song_for_kind(path: &Path, kind: &str) -> bool {
     match kind {
         "kar" => extension == "kar",
         "ncn" | "kmid" => extension == "mid" || extension == "midi",
-        _ => matches!(extension.as_str(), "kar" | "mid" | "midi"),
+        "mkc" => extension == "mkc",
+        _ => matches!(extension.as_str(), "kar" | "mid" | "midi" | "mkc"),
     }
 }
 
@@ -874,7 +890,7 @@ fn file_stamp(path: &Path) -> Option<(i64, u64)> {
     Some((modified_at, metadata.len()))
 }
 
-fn record_from_song(path: &Path, song: &Song, kind: &str) -> SongRecord {
+pub fn record_from_song(path: &Path, song: &Song, kind: &str) -> SongRecord {
     let code = path
         .file_stem()
         .map(|stem| stem.to_string_lossy().into_owned())
@@ -890,14 +906,15 @@ fn record_from_song(path: &Path, song: &Song, kind: &str) -> SongRecord {
         SourceFormat::Ncn => "ncn",
         SourceFormat::Kmid => "kmid",
         SourceFormat::Midi => "midi",
+        SourceFormat::Mkc => "mkc",
     };
     let format = match kind {
-        "ncn" | "kmid" | "kar" => kind,
+        "ncn" | "kmid" | "kar" | "mkc" => kind,
         _ => detected,
     };
     let (language, vocal_channel) = match format {
         "ncn" | "kar" => (Some("th".to_owned()), Some(9)),
-        "kmid" => (song.language.clone(), song.vocal_channel),
+        "kmid" | "mkc" => (song.language.clone(), song.vocal_channel),
         _ => (None, None),
     };
     let metadata = std::fs::metadata(path).ok();
@@ -1015,6 +1032,22 @@ mod tests {
             modified_at: 1,
             missing: false,
         }
+    }
+
+    #[test]
+    fn deletes_specific_songs_by_path() {
+        let mut library = Library::open_in_memory().unwrap();
+        let first = record("1001");
+        let second = record("1002");
+        library
+            .insert_records(&[first.clone(), second.clone()])
+            .unwrap();
+        assert_eq!(library.delete_paths(&[first.path]).unwrap(), 1);
+        let rows = library.songs().unwrap();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].code, second.code);
+        assert_eq!(library.delete_paths(&[second.path]).unwrap(), 1);
+        assert!(library.songs().unwrap().is_empty());
     }
 
     #[test]

@@ -27,6 +27,8 @@ roxmltree.workspace = true
 rustysynth.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+unicode-normalization.workspace = true
+unicode-segmentation.workspace = true
 
 [target."cfg(windows)".build-dependencies]
 winresource = "0.1"

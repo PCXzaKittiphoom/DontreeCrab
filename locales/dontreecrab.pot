@@ -516,6 +516,9 @@ msgstr ""
 msgid "KAR MIDI"
 msgstr ""
 
+msgid "MKC MIDI"
+msgstr ""
+
 msgid "Restore"
 msgstr ""
 
@@ -733,4 +736,278 @@ msgid "First beat"
 msgstr ""
 
 msgid "Other beats"
+msgstr ""
+
+msgid "Instrument"
+msgstr ""
+
+msgid "Bank"
+msgstr ""
+
+msgid "Pan"
+msgstr ""
+
+msgid "Reverb"
+msgstr ""
+
+msgid "Chorus"
+msgstr ""
+
+msgid "Drum bank fixed"
+msgstr ""
+
+msgid "Change key"
+msgstr ""
+
+msgid "Raise semitone [1+]"
+msgstr ""
+
+msgid "Lower semitone [1-]"
+msgstr ""
+
+msgid "Raise octave [12+]"
+msgstr ""
+
+msgid "Lower octave [12-]"
+msgstr ""
+
+msgid "Reset key"
+msgstr ""
+
+msgid "Lock MIDI values"
+msgstr ""
+
+msgid "Unlock MIDI values"
+msgstr ""
+
+#: crates/player/src/gui.rs
+msgid "MIDI Editor"
+msgstr ""
+
+msgid "Tools"
+msgstr ""
+
+msgid "Reset the song data folders to their defaults?"
+msgstr ""
+
+msgid "The selected NCN, KMID, KAR and MKC folders will be cleared."
+msgstr ""
+
+msgid "Reset"
+msgstr ""
+
+msgid "Midi Track Editor"
+msgstr ""
+
+msgid "Track Name"
+msgstr ""
+
+msgid "Patch Name"
+msgstr ""
+
+msgid "Save"
+msgstr ""
+
+msgid "Save As"
+msgstr ""
+
+msgid "Save MIDI"
+msgstr ""
+
+msgid "Overwrite the original file?"
+msgstr ""
+
+msgid "Overwrite"
+msgstr ""
+
+msgid "An existing file will be overwritten. Continue?"
+msgstr ""
+
+msgid "This file is outside the song folders."
+msgstr ""
+
+msgid "The original file outside the song folders will be overwritten. Continue?"
+msgstr ""
+
+msgid "Saved"
+msgstr ""
+
+msgid "Could not save the MIDI file: {}"
+msgstr ""
+
+msgid "No song is loaded"
+msgstr ""
+
+msgid "Track {}"
+msgstr ""
+
+msgid "This track has no MIDI channel"
+msgstr ""
+
+msgid "Saved, but the song database could not be updated: {}"
+msgstr ""
+
+msgid "File name"
+msgstr ""
+
+msgid "Song title"
+msgstr ""
+
+msgid "Folder"
+msgstr ""
+
+msgid "Enter a file name"
+msgstr ""
+
+msgid "Saved as {}"
+msgstr ""
+
+msgid "Could not save as"
+msgstr ""
+
+msgid "An existing file will be overwritten. Continue?"
+msgstr ""
+
+msgid "The NCN lyric/cursor files are missing"
+msgstr ""
+
+msgid "Delete songs"
+msgstr ""
+
+msgid "Delete the selected songs?"
+msgstr ""
+
+msgid "{} selected"
+msgstr ""
+
+msgid "Delete from folder also removes the files from disk."
+msgstr ""
+
+msgid "Delete from folder"
+msgstr ""
+
+msgid "Remove from database"
+msgstr ""
+
+msgid "Delete {} songs…"
+msgstr ""
+
+msgid "Delete…"
+msgstr ""
+
+msgid "Remove from the database or delete the files"
+msgstr ""
+
+msgid "Deleted {} songs"
+msgstr ""
+
+msgid "Removed {} songs from the database"
+msgstr ""
+
+msgid "MKC Converter"
+msgstr ""
+
+msgid "Choose file"
+msgstr ""
+
+msgid "Include subfolders"
+msgstr ""
+
+msgid "Text encoding"
+msgstr ""
+
+msgid "Automatic"
+msgstr ""
+
+msgid "Thai (Windows-874)"
+msgstr ""
+
+msgid "Japanese (Shift-JIS)"
+msgstr ""
+
+msgid "Chinese (GB18030)"
+msgstr ""
+
+msgid "Chinese (Big5)"
+msgstr ""
+
+msgid "Korean (EUC-KR)"
+msgstr ""
+
+msgid "Vietnamese (Windows-1258)"
+msgstr ""
+
+msgid "Cyrillic (Windows-1251)"
+msgstr ""
+
+msgid "Latin-1"
+msgstr ""
+
+msgid "Auto tries UTF-8, then Shift-JIS, then Thai (Windows-874)"
+msgstr ""
+
+msgid "Browse"
+msgstr ""
+
+msgid "Choose where the .mkc files should go"
+msgstr ""
+
+msgid "Overwrite existing .mkc files"
+msgstr ""
+
+msgid "Convert to MKC"
+msgstr ""
+
+msgid "Converting…"
+msgstr ""
+
+msgid "Looking for karaoke songs…"
+msgstr ""
+
+msgid "Scanning… {} song(s) found"
+msgstr ""
+
+msgid "Converted {} song(s)"
+msgstr ""
+
+msgid "Converted {} song(s), {} failed"
+msgstr ""
+
+msgid "Log"
+msgstr ""
+
+msgid "Ready when you are."
+msgstr ""
+
+msgid "Conversion stopped unexpectedly"
+msgstr ""
+
+msgid "Karaoke to MKC"
+msgstr ""
+
+msgid "Source karaoke files"
+msgstr ""
+
+msgid "No karaoke file or folder selected"
+msgstr ""
+
+msgid "Choose a karaoke file or folder first"
+msgstr ""
+
+msgid "Choose an output base folder first"
+msgstr ""
+
+msgid "Output base folder"
+msgstr ""
+
+msgid "Files will be created under the MKC prefix folder"
+msgstr ""
+
+msgid "Choose a karaoke file"
+msgstr ""
+
+msgid "Choose output base folder"
+msgstr ""
+
+msgid "MKC  ·  {} BPM  ·  {} lines"
 msgstr ""

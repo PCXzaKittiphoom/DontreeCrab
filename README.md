@@ -1,11 +1,11 @@
 # DontreeCrab
 
-A MIDI karaoke player for **KAR**, **NCN**, **KMID** and plain MIDI files, written
+A MIDI karaoke player for **KAR**, **NCN**, **KMID**, **MKC** and plain MIDI files, written
 in Rust with `eframe`/`egui` and `rustysynth`.
 
 [GitHub repository](https://github.com/PCXzaKittiphoom/DontreeCrab)
 
-> **Status:** 0.1.2
+> **Status:** 0.1.3
 
 DontreeCrab focuses on accurate lyric timing, Thai karaoke conventions, a clean
 monochrome interface, and offline playback. It does not collect telemetry and
@@ -17,10 +17,16 @@ does not need a network connection.
 
 ## Features
 
-- KAR (`.kar`), NCN (`.mid` + `.lyr` + `.cur`), KMID (`LyrHdr` payload) and
-  ordinary MIDI playback.
+- KAR (`.kar`), NCN (`.mid` + `.lyr` + `.cur`), KMID (`LyrHdr` payload), MKC
+  (`.mkc`) and ordinary MIDI playback.
 - Timed lyric lines with a feathered per-syllable wipe, Thai leading-vowel
   handling, and support for the classic alternating cursor.
+- Lyric languages: Thai, English/Latin, Vietnamese (Sarabun) plus bundled
+  Japanese, Korean, Chinese and Lao font packs; `manifest.language` records the
+  song language and text is normalised to Unicode NFC.
+- Standalone `mkc` CLI and `mkc-converter` GUI for building `.mkc` packages from
+  NCN, KMID, KAR or lyric-bearing MIDI, with a source-encoding picker and the
+  `MKC` prefix output layout.
 - Bar/beat display that follows the MIDI time-signature map.
 - Tempo map support: the BPM readout and speed follow tempo changes, with a
   constant user BPM offset.
@@ -200,6 +206,14 @@ A Standard MIDI File with an embedded `LyrHdr` text event. The payload is
 `LyrHdr` + one version character + Base64(zlib(XML)). DontreeCrab converts the
 word-level lyric cursor into timed lyric lines.
 
+### MKC
+
+An open ZIP-based container (`.mkc`) with a stored `mimetype`, a UTF-8
+`manifest.json`, timed `lyrics.json`, plain `lyrics.txt` and the original
+`song.mid` byte-for-byte. There is no XOR layer and no encryption. The format is
+documented in [`docs/MKC-v0.1.md`](docs/MKC-v0.1.md); the converter always
+writes results under an `MKC` prefix folder.
+
 ### MIDI
 
 Any other Standard MIDI File plays normally and is labelled `MIDI Common` when
@@ -230,9 +244,10 @@ synthetic and safe to redistribute.
 powershell -ExecutionPolicy Bypass -File scripts/build-release.ps1
 ```
 
-This creates `dist/DontreeCrab-<version>.zip` with the executable, README,
-translation catalogs, and font licenses. A `soundfonts/` placeholder is added;
-no SoundFont is bundled.
+This creates `dist/DontreeCrab-<version>.zip` with the player, `mkc` CLI,
+`mkc-converter` GUI, README, MKC specification, translation catalogs, font
+licenses and the bundled language font packs. A `soundfonts/` placeholder is
+added; no SoundFont is bundled.
 
 ## Project layout
 

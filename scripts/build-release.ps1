@@ -14,7 +14,7 @@ Set-Location (Join-Path $PSScriptRoot "..")
 
 if (-not $SkipBuild) {
     Write-Host "building release..."
-    cargo build --release -p dontreecrab
+    cargo build --release -p dontreecrab -p mkc -p mkc-gui
 }
 
 $version = (Select-String -Path Cargo.toml -Pattern '^version\s*=\s*"(.+)"').Matches[0].Groups[1].Value
@@ -25,10 +25,14 @@ Remove-Item -Recurse -Force $dist -ErrorAction SilentlyContinue
 New-Item -ItemType Directory -Force $dist | Out-Null
 
 Copy-Item "target\release\DontreeCrab.exe" $dist
+Copy-Item "target\release\mkc.exe" $dist
+Copy-Item "target\release\mkc-converter.exe" $dist
 Copy-Item "README.md" $dist
 Copy-Item "LICENSE" $dist
 Copy-Item "THIRD_PARTY_NOTICES.md" $dist
 Copy-Item "CHANGELOG.md" $dist
+Copy-Item "docs\MKC-v0.1.md" $dist
+Write-Host "bundled the player, MKC CLI and converter"
 
 $localesDir = Join-Path $dist "locales"
 New-Item -ItemType Directory -Force $localesDir | Out-Null
@@ -41,7 +45,10 @@ $fontLicenseDir = Join-Path $dist "assets\fonts"
 New-Item -ItemType Directory -Force $fontLicenseDir | Out-Null
 Copy-Item "assets\fonts\*.txt" $fontLicenseDir
 Copy-Item -Recurse -Force "assets\fonts\egui" $fontLicenseDir
-Write-Host "bundled font licenses"
+$packDir = Join-Path $fontLicenseDir "packs"
+New-Item -ItemType Directory -Force $packDir | Out-Null
+Copy-Item "assets\fonts\packs\*" $packDir
+Write-Host "bundled font licenses and language font packs"
 
 # The public package never contains a SoundFont.
 $sfDir = Join-Path $dist "soundfonts"
